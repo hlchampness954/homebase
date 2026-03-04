@@ -358,6 +358,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .dp-item-sub{font-size:11px;color:var(--text3);margin-top:2px;}
 
 /* ══ AI BUBBLE ══ */
+.ai-backdrop{display:none;}
 .ai-fab{position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--violet),#6d28d9);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 4px 20px rgba(157,127,244,.45);z-index:400;transition:all .2s;}
 .ai-fab:hover{transform:scale(1.08);}
 .ai-fab-ring{position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(157,127,244,.3);animation:ring 2.5s infinite;}
@@ -514,8 +515,16 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   .cev{font-size:8px;}
 
   /* AI window full-width on mobile */
-  .ai-fab{bottom:76px;right:16px;width:48px;height:48px;font-size:18px;}
-  .ai-win{right:8px;left:8px;width:auto;max-height:75dvh;bottom:132px;}
+  .ai-fab{display:none;}
+  .ai-win{
+    right:0;left:0;width:100%;
+    max-height:80dvh;
+    bottom:60px;
+    border-radius:20px 20px 0 0;
+    border-bottom:none;
+    z-index:140;
+  }
+  .ai-backdrop{display:block!important;}
 
   /* Modals full screen on mobile */
   .modal{width:100%!important;max-width:100%!important;border-radius:20px 20px 0 0;margin-top:auto;max-height:90dvh;}
@@ -583,37 +592,42 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   background:var(--bg);
   display:flex;flex-direction:column;
   align-items:center;justify-content:center;
-  gap:0;
+  padding:0 0 env(safe-area-inset-bottom);
   transition:opacity .3s;
+  overflow:hidden;
 }
 .pin-screen.hidden{opacity:0;pointer-events:none;}
-.pin-brand{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-bottom:6px;letter-spacing:-.5px;}
-.pin-sub{font-size:13px;color:var(--text3);margin-bottom:36px;}
-.pin-dots{display:flex;gap:14px;margin-bottom:32px;}
-.pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--border2);transition:all .15s;}
-.pin-dot.filled{background:var(--teal);border-color:var(--teal);transform:scale(1.1);}
-.pin-dot.error{background:var(--coral);border-color:var(--coral);animation:shake .3s ease;}
-@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}};
-.pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:240px;}
+.pin-brand{font-family:'Fraunces',serif;font-size:26px;color:var(--teal);margin-bottom:4px;letter-spacing:-.5px;}
+.pin-sub{font-size:13px;color:var(--text3);margin-bottom:28px;text-align:center;padding:0 20px;}
+.pin-dots{display:flex;gap:18px;margin-bottom:28px;}
+.pin-dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--border2);transition:all .15s;background:transparent;}
+.pin-dot.filled{background:var(--teal);border-color:var(--teal);transform:scale(1.15);}
+.pin-dot.error{background:var(--coral);border-color:var(--coral);animation:shake .35s ease;}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+.pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:min(320px,88vw);}
 .pin-key{
-  height:64px;border-radius:16px;
+  height:min(80px,20vw);
+  min-height:70px;
+  border-radius:18px;
   border:1px solid var(--border2);
   background:var(--bg2);
   color:var(--text);
   font-family:'DM Sans',sans-serif;
-  font-size:22px;font-weight:600;
+  font-size:clamp(22px,6vw,30px);
+  font-weight:600;
   cursor:pointer;
-  transition:all .12s;
-  display:flex;align-items:center;justify-content:center;
+  transition:background .1s,transform .1s,border-color .1s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
   -webkit-tap-highlight-color:transparent;
   user-select:none;
+  gap:2px;
 }
-.pin-key:active{background:var(--bg3);transform:scale(.94);border-color:var(--teal);}
-.pin-key.del{font-size:18px;color:var(--text3);}
+.pin-key:active{background:var(--teal-bg);transform:scale(.92);border-color:var(--teal);}
+.pin-key .pk-sub{font-size:9px;font-weight:500;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;line-height:1;}
+.pin-key.del{font-size:clamp(18px,5vw,24px);color:var(--text3);}
 .pin-key.empty{background:transparent;border:none;cursor:default;}
-.pin-err{font-size:12px;color:var(--coral);margin-top:14px;min-height:18px;text-align:center;}
-.pin-hint{font-size:11px;color:var(--text3);margin-top:20px;cursor:pointer;text-decoration:underline;}
-
+.pin-err{font-size:13px;color:var(--coral);margin-top:14px;min-height:20px;text-align:center;font-weight:600;}
+.pin-hint{font-size:11px;color:var(--text3);margin-top:16px;cursor:pointer;text-decoration:underline;}
 /* ══ AI SETUP MODAL ══ */
 .ai-setup-modal{width:480px;}
 .ai-setup-step{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:14px;margin-bottom:10px;}
@@ -651,6 +665,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 
 <!-- MOBILE SIDEBAR BACKDROP -->
 <div class="mob-sidebar-backdrop" id="mob-backdrop"></div>
+<!-- AI BACKDROP (mobile only) -->
+<div class="ai-backdrop" id="ai-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:139;backdrop-filter:blur(2px);"></div>
 
 <div class="body">
 
@@ -1339,6 +1355,10 @@ document.addEventListener('DOMContentLoaded',function(){
   });
   document.getElementById('bnav-ai').addEventListener('click',toggleAI);
   document.getElementById('mob-backdrop').addEventListener('click',closeMobSidebar);
+  document.getElementById('ai-backdrop').addEventListener('click',()=>{
+    document.getElementById('ai-win').classList.remove('open');
+    document.getElementById('ai-backdrop').style.display='none';
+  });
 
   // Init Supabase auto-reconnect
   sbInit();
@@ -2094,7 +2114,17 @@ function openWall(){
 // ════════════════════════════════════════════════
 // AI ASSISTANT
 // ════════════════════════════════════════════════
-function toggleAI(){const w=document.getElementById('ai-win');w.classList.toggle('open');if(w.classList.contains('open'))document.getElementById('ai-in').focus();}
+function toggleAI(){
+  const w=document.getElementById('ai-win');
+  const bd=document.getElementById('ai-backdrop');
+  w.classList.toggle('open');
+  if(w.classList.contains('open')){
+    document.getElementById('ai-in').focus();
+    if(bd && window.innerWidth<=767) bd.style.display='block';
+  } else {
+    if(bd) bd.style.display='none';
+  }
+}
 function useChip(btn){document.getElementById('ai-in').value=btn.textContent;document.getElementById('ai-win').classList.add('open');sendAI();}
 
 async function sendAI(){
@@ -2445,17 +2475,17 @@ document.addEventListener('DOMContentLoaded', function(){
     <div class="pin-dot" id="pd3"></div>
   </div>
   <div class="pin-grid" id="pin-grid">
-    <div class="pin-key" data-k="1">1</div>
-    <div class="pin-key" data-k="2">2</div>
-    <div class="pin-key" data-k="3">3</div>
-    <div class="pin-key" data-k="4">4</div>
-    <div class="pin-key" data-k="5">5</div>
-    <div class="pin-key" data-k="6">6</div>
-    <div class="pin-key" data-k="7">7</div>
-    <div class="pin-key" data-k="8">8</div>
-    <div class="pin-key" data-k="9">9</div>
+    <div class="pin-key" data-k="1">1<span class="pk-sub"></span></div>
+    <div class="pin-key" data-k="2">2<span class="pk-sub">ABC</span></div>
+    <div class="pin-key" data-k="3">3<span class="pk-sub">DEF</span></div>
+    <div class="pin-key" data-k="4">4<span class="pk-sub">GHI</span></div>
+    <div class="pin-key" data-k="5">5<span class="pk-sub">JKL</span></div>
+    <div class="pin-key" data-k="6">6<span class="pk-sub">MNO</span></div>
+    <div class="pin-key" data-k="7">7<span class="pk-sub">PQRS</span></div>
+    <div class="pin-key" data-k="8">8<span class="pk-sub">TUV</span></div>
+    <div class="pin-key" data-k="9">9<span class="pk-sub">WXYZ</span></div>
     <div class="pin-key empty"></div>
-    <div class="pin-key" data-k="0">0</div>
+    <div class="pin-key" data-k="0">0<span class="pk-sub">+</span></div>
     <div class="pin-key del" data-k="del">⌫</div>
   </div>
   <div class="pin-err" id="pin-err"></div>
