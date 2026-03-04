@@ -2176,21 +2176,16 @@ For vendor search: use your knowledge of New Braunfels TX area businesses, add a
 Be concise and warm.`;
   try{
     // Use stored proxy URL + API key
-  const storedKey = localStorage.getItem('hb_ai_key')||'';
   const storedProxy = localStorage.getItem('hb_ai_proxy')||'';
-  if(!storedKey){
+  if(!storedProxy){
     document.getElementById(tid)?.remove();
-    const noKeyMsg = '<strong>⚙️ AI Setup needed</strong> — tap the gear icon in the top nav to add your Anthropic API key and Cloudflare Worker URL.';
+    const noKeyMsg = '<strong>⚙️ AI Setup needed</strong> — tap the gear icon in the top nav, paste your Cloudflare Worker URL, and tap Save.';
     appendMsg('ai', noKeyMsg);
     btn.disabled=false;return;
   }
-  const endpoint = storedProxy || 'https://api.anthropic.com/v1/messages';
-  const headers = {'Content-Type':'application/json','anthropic-version':'2023-06-01'};
-  if(!storedProxy) headers['x-api-key']=storedKey;
-  else headers['x-api-key']=storedKey;
-  const res=await fetch(endpoint,{
+  const res=await fetch(storedProxy,{
     method:'POST',
-    headers,
+    headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01'},
     body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,system:sys,messages:aiHistory})
   });
   if(!res.ok){
@@ -2402,22 +2397,17 @@ function resetLockTimer(){
 // AI SETUP
 // ════════════════════════════════════════════════
 function aiSetupInit(){
-  const key = localStorage.getItem('hb_ai_key')||'';
   const proxy = localStorage.getItem('hb_ai_proxy')||'';
-  const keyInp = document.getElementById('ai-key-inp');
   const proxyInp = document.getElementById('ai-proxy-inp');
-  if(keyInp) keyInp.value = key ? '••••••••' + key.slice(-6) : '';
   if(proxyInp) proxyInp.value = proxy;
 
   document.getElementById('ai-setup-cancel').addEventListener('click',()=>closeOverlay('ai-setup-overlay'));
   document.getElementById('ai-setup-save').addEventListener('click', async ()=>{
-    const k = document.getElementById('ai-key-inp').value.trim();
     const p = document.getElementById('ai-proxy-inp').value.trim();
-    if(k && !k.startsWith('••')) localStorage.setItem('hb_ai_key', k);
-    if(p) localStorage.setItem('hb_ai_proxy', p);
+    if(!p){ toast('⚠️ Paste your Cloudflare Worker URL'); return; }
+    localStorage.setItem('hb_ai_proxy', p);
     toast('✅ Saved! Testing connection…');
     closeOverlay('ai-setup-overlay');
-    // Quick test
     await testAI();
   });
   document.getElementById('save-pin-btn').addEventListener('click',()=>{
@@ -2430,14 +2420,18 @@ function aiSetupInit(){
 }
 
 async function testAI(){
-  const key = localStorage.getItem('hb_ai_key')||'';
   const proxy = localStorage.getItem('hb_ai_proxy')||'';
-  if(!key||!proxy){ toast('⚠️ Add API key and proxy URL first'); return; }
+  if(!proxy){ toast('⚠️ Add your Cloudflare Worker URL in ⚙️ Settings first'); return; }
   try{
+    // First do a GET health check
+    const health = await fetch(proxy,{method:'GET'});
+    const hdata = await health.json();
+    if(!hdata.status){ toast('⚠️ Worker not responding correctly'); return; }
+    // Then test a real AI call
     const r = await fetch(proxy,{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:30,messages:[{role:'user',content:'Say: AI connected!'}]})
+      headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:30,messages:[{role:'user',content:'Say exactly: AI connected!'}]})
     });
     const d = await r.json();
     const msg = d.content?.[0]?.text||'No response';
@@ -2507,15 +2501,13 @@ document.addEventListener('DOMContentLoaded', function(){
       The AI needs an Anthropic API key. Because this runs in a browser, calls must go through a small proxy. Here's the free 2-minute setup:
     </p>
     <div class="ai-setup-step">
-      <div class="ai-setup-step-title">Step 1 — Get your Anthropic API key</div>
+      <div class="ai-setup-step-title">Step 1 — Deploy your Cloudflare Worker</div>
       <div class="ai-setup-step-desc">
-        Go to <a href="https://console.anthropic.com/keys" target="_blank">console.anthropic.com/keys</a> → Create Key → copy it.<br>
-        New accounts get $5 free credit. HomeBase uses ~$0.01 per AI conversation.
+        Your Anthropic API key is baked into the Worker on Cloudflare — it never touches this app or GitHub. Just paste your Worker URL below.
       </div>
-      <input class="ai-key-input" type="password" id="ai-key-inp" placeholder="sk-ant-api…">
     </div>
     <div class="ai-setup-step">
-      <div class="ai-setup-step-title">Step 2 — Deploy a free Cloudflare Worker proxy (one time)</div>
+      <div class="ai-setup-step-title">Step 2 — Paste your Worker URL</div>
       <div class="ai-setup-step-desc">
         1. Go to <a href="https://workers.cloudflare.com" target="_blank">workers.cloudflare.com</a> → Sign up free → Create Worker<br>
         2. Replace all the code with this:<br>
