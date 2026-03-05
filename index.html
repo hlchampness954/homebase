@@ -22,9 +22,9 @@
   --sky:#5b9bd5;--sky-bg:rgba(91,155,213,.09);
   --r:14px;--rs:9px;--sh:0 8px 32px rgba(0,0,0,.5);
 }
-body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);height:100dvh;height:100svh;display:flex;flex-direction:column;overflow:hidden;padding-top:env(safe-area-inset-top);}
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(62,207,184,.04),transparent);pointer-events:none;z-index:0;}
-.topnav{position:relative;z-index:20;display:flex;align-items:center;padding:0 20px;height:54px;background:var(--bg2);border-bottom:1px solid var(--border);gap:4px;flex-shrink:0;}
+.topnav{position:relative;z-index:20;display:flex;align-items:center;padding:0 16px;height:54px;background:var(--bg2);border-bottom:1px solid var(--border);gap:4px;flex-shrink:0;overflow:hidden;}
 .brand{font-family:'Fraunces',serif;font-size:19px;color:var(--teal);letter-spacing:-.5px;margin-right:10px;flex-shrink:0;}
 .tab{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:30px;border:1px solid transparent;background:transparent;color:var(--text2);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;}
 .tab:hover{color:var(--text);background:var(--bg3);}
@@ -434,6 +434,11 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(30px);background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rs);padding:9px 16px;font-size:12px;color:var(--text);z-index:700;box-shadow:var(--sh);opacity:0;transition:all .22s;white-space:nowrap;}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
 
+/* ══ USER CHIPS ══ */
+.user-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:var(--bg);border:1px solid var(--border2);font-size:12px;color:var(--text2);}
+.user-chip .ux{cursor:pointer;color:var(--text3);font-size:13px;margin-left:2px;}
+.user-chip .ux:hover{color:var(--coral);}
+
 /* ══ SUPABASE SYNC STATUS ══ */
 .sync-pill{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text3);font-weight:500;padding:4px 10px;border-radius:20px;background:var(--bg3);border:1px solid var(--border);cursor:pointer;transition:all .15s;}
 .sync-pill:hover{border-color:var(--border2);}
@@ -478,8 +483,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   .sync-pill span:last-child{display:none;}/* hide text, keep dot */
 
   /* Body accounts for bottom nav */
-  body{padding-bottom:env(safe-area-inset-bottom);}
-  .body{padding-bottom:60px;}
+  body{padding-bottom:0;}
+  .body{padding-bottom:calc(60px + env(safe-area-inset-bottom));}
 
   /* Bottom tab bar */
   .bottom-nav{display:flex!important;}
@@ -554,7 +559,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   position:fixed;bottom:0;left:0;right:0;
   background:var(--bg2);
   border-top:1px solid var(--border);
-  padding:6px 0 calc(6px + env(safe-area-inset-bottom));
+  padding:8px 0 calc(8px + env(safe-area-inset-bottom));
   z-index:150;
   justify-content:space-around;
   align-items:center;
@@ -592,7 +597,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   background:var(--bg);
   display:flex;flex-direction:column;
   align-items:center;justify-content:center;
-  padding:0 0 env(safe-area-inset-bottom);
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
   transition:opacity .3s;
   overflow:hidden;
 }
@@ -636,6 +641,51 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .ai-setup-step-desc a{color:var(--violet);}
 .ai-key-input{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:var(--rs);padding:9px 12px;color:var(--text);font-family:monospace;font-size:11px;outline:none;margin-top:8px;transition:border-color .15s;}
 .ai-key-input:focus{border-color:var(--violet);}
+
+
+/* ══ SUGGESTED TASKS SHEET ══ */
+.sugg-sheet{
+  position:fixed;inset:0;z-index:300;
+  display:flex;flex-direction:column;
+  justify-content:flex-end;
+  background:rgba(0,0,0,.55);
+  backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;
+  transition:opacity .25s;
+}
+.sugg-sheet.open{opacity:1;pointer-events:all;}
+.sugg-inner{
+  background:var(--bg2);
+  border-radius:22px 22px 0 0;
+  border:1px solid var(--border2);
+  border-bottom:none;
+  max-height:82dvh;
+  display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom);
+  transform:translateY(100%);
+  transition:transform .3s cubic-bezier(.32,1.1,.6,1);
+}
+.sugg-sheet.open .sugg-inner{transform:translateY(0);}
+.sugg-handle{width:36px;height:4px;background:var(--border2);border-radius:2px;margin:10px auto 0;flex-shrink:0;}
+.sugg-header{padding:14px 18px 10px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid var(--border);}
+.sugg-title{font-family:'Fraunces',serif;font-size:17px;color:var(--text);}
+.sugg-close{background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:2px 6px;border-radius:6px;}
+.sugg-close:hover{color:var(--text);}
+.sugg-scroll{flex:1;overflow-y:auto;padding:12px 14px 20px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;}
+.sugg-card{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:14px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.sugg-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.sugg-card-name{font-size:14px;font-weight:600;color:var(--text);flex:1;cursor:text;outline:none;border:none;background:transparent;font-family:'DM Sans',sans-serif;padding:0;}
+.sugg-card-name:focus{color:var(--teal);}
+.sugg-card-freq{font-size:11px;color:var(--text3);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
+.sugg-card-bottom{display:flex;gap:8px;align-items:center;}
+.sugg-card-who{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-family:'DM Sans',sans-serif;cursor:pointer;}
+.sugg-card-add{margin-left:auto;padding:5px 14px;border-radius:8px;border:none;background:var(--teal);color:#052a25;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s;font-family:'DM Sans',sans-serif;}
+.sugg-card-add:hover{background:var(--teal-d);}
+.sugg-folder-badge{font-size:11px;color:var(--text3);margin-bottom:4px;}
 
 </style>
 </head>
@@ -817,7 +867,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     </div>
     <div class="frow">
       <div class="fg"><label>Due Date</label><input type="date" id="t-date"></div>
-      <div class="fg"><label>Assigned To</label><select id="t-who"><option>Anyone</option><option>Me</option><option>Partner</option></select></div>
+      <div class="fg"><label>Assigned To</label><select id="t-who"><option>Anyone</option><option>Hayley</option><option>Luke</option><option>Both</option></select></div>
     </div>
     <div class="fg"><label>Repeat</label><select id="t-repeat"><option value="">None</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></div>
     <div class="fg"><label>Notes</label><textarea id="t-notes" placeholder="Details…"></textarea></div>
@@ -972,87 +1022,99 @@ let folders = {
 
 // Prebuilt tasks per folder
 const PREBUILT = {
-  r1:[
-    {name:'Vacuum living room',freq:'Weekly'},
-    {name:'Dust furniture & shelves',freq:'Weekly'},
-    {name:'Clean windows',freq:'Monthly'},
-    {name:'Deep clean carpet',freq:'Every 6 months'},
-    {name:'Clean ceiling fans',freq:'Monthly'},
-    {name:'Organize clutter',freq:'Weekly'},
+  r1:[ // Living Room
+    {name:'Vacuum living room',freq:'Weekly'},{name:'Dust furniture & shelves',freq:'Weekly'},
+    {name:'Clean windows & sills',freq:'Monthly'},{name:'Deep clean carpet',freq:'Every 6 months'},
+    {name:'Dust ceiling fan blades',freq:'Monthly'},{name:'Clean TV & remotes',freq:'Monthly'},
+    {name:'Wipe down light switches & outlets',freq:'Monthly'},{name:'Clean baseboards',freq:'Monthly'},
+    {name:'Rotate sofa cushions',freq:'Monthly'},{name:'Clean air vents & registers',freq:'Every 3 months'},
+    {name:'Shampoo upholstery',freq:'Every 6 months'},{name:'Clean blinds & curtains',freq:'Every 3 months'},
+    {name:'Touch up paint scuffs',freq:'Yearly'},{name:'Test smoke detector',freq:'Monthly'},
   ],
-  r2:[
-    {name:'Clean dishwasher',freq:'Monthly'},
-    {name:'Clean coffee maker',freq:'Monthly'},
-    {name:'Clean refrigerator interior',freq:'Monthly'},
-    {name:'Clean oven & stovetop',freq:'Monthly'},
-    {name:'Wipe down cabinets',freq:'Monthly'},
-    {name:'Clean microwave',freq:'Weekly'},
-    {name:'Descale coffee maker',freq:'Every 3 months'},
-    {name:'Clean freezer',freq:'Every 6 months'},
-    {name:'Deodorize garbage disposal',freq:'Weekly'},
-    {name:'Mop kitchen floor',freq:'Weekly'},
+  r2:[ // Kitchen
+    {name:'Run dishwasher cleaning cycle',freq:'Monthly'},{name:'Clean coffee maker',freq:'Monthly'},
+    {name:'Clean inside microwave',freq:'Weekly'},{name:'Wipe down stovetop',freq:'Weekly'},
+    {name:'Mop kitchen floor',freq:'Weekly'},{name:'Clean range hood & filter',freq:'Monthly'},
+    {name:'Deep clean oven',freq:'Every 3 months'},{name:'Clean refrigerator inside',freq:'Monthly'},
+    {name:'Vacuum refrigerator coils',freq:'Every 6 months'},{name:'Clean garbage disposal',freq:'Monthly'},
+    {name:'Defrost & clean freezer',freq:'Every 6 months'},{name:'Replace water filter',freq:'Every 6 months'},
+    {name:'Wipe cabinet fronts',freq:'Monthly'},{name:'Clean sink & faucet',freq:'Weekly'},
+    {name:'Empty & sanitize trash can',freq:'Weekly'},{name:'Check pantry for expired food',freq:'Monthly'},
+    {name:'Clean under appliances',freq:'Every 6 months'},{name:'Degrease backsplash',freq:'Monthly'},
+    {name:'Check fire extinguisher',freq:'Yearly'},{name:'Clean kitchen drains',freq:'Monthly'},
   ],
-  r3:[
-    {name:'Clean toilet',freq:'Weekly'},
-    {name:'Scrub shower & tub',freq:'Weekly'},
-    {name:'Clean sink & counters',freq:'Weekly'},
-    {name:'Replace shower liner',freq:'Every 6 months'},
-    {name:'Clean bathroom exhaust fan',freq:'Every 3 months'},
-    {name:'Re-caulk shower',freq:'Annual'},
+  r3:[ // Bathroom
+    {name:'Clean toilet',freq:'Weekly'},{name:'Scrub shower & tub',freq:'Weekly'},
+    {name:'Clean sink & faucet',freq:'Weekly'},{name:'Mop bathroom floor',freq:'Weekly'},
+    {name:'Replace shower liner',freq:'Every 6 months'},{name:'Re-caulk shower & tub',freq:'Yearly'},
+    {name:'Clean exhaust fan',freq:'Every 6 months'},{name:'Wash bath mat',freq:'Weekly'},
+    {name:'Organize under sink',freq:'Monthly'},{name:'Replace toothbrushes',freq:'Every 3 months'},
+    {name:'Clean grout',freq:'Every 3 months'},{name:'Check & replace toilet parts',freq:'Yearly'},
+    {name:'Clean mirror & glass',freq:'Weekly'},{name:'Restock toiletries',freq:'Monthly'},
+    {name:'Check for mold or mildew',freq:'Monthly'},{name:'Clean showerhead',freq:'Monthly'},
   ],
-  r4:[
-    {name:'Wash bed linens',freq:'Weekly'},
-    {name:'Flip/rotate mattress',freq:'Every 6 months'},
-    {name:'Vacuum under bed',freq:'Monthly'},
-    {name:'Dust blinds',freq:'Monthly'},
-    {name:'Clean ceiling fan',freq:'Monthly'},
+  r4:[ // Bedroom
+    {name:'Wash bed linens',freq:'Weekly'},{name:'Flip & rotate mattress',freq:'Every 6 months'},
+    {name:'Vacuum under bed',freq:'Monthly'},{name:'Wash pillows',freq:'Every 3 months'},
+    {name:'Wash comforter',freq:'Every 3 months'},{name:'Dust ceiling fan',freq:'Monthly'},
+    {name:'Wipe down nightstands',freq:'Weekly'},{name:'Organize closet',freq:'Monthly'},
+    {name:'Vacuum carpet or mop floor',freq:'Weekly'},{name:'Clean windows & sills',freq:'Monthly'},
+    {name:'Replace mattress cover',freq:'Yearly'},{name:'Donate unused clothing',freq:'Every 6 months'},
+    {name:'Clean under furniture',freq:'Monthly'},{name:'Test smoke detector',freq:'Monthly'},
   ],
-  r5:[
-    {name:'Change HVAC filter',freq:'Every 3 months'},
-    {name:'Test smoke detectors',freq:'Monthly'},
-    {name:'Clean dryer vent',freq:'Annual'},
-    {name:'Flush water heater',freq:'Annual'},
-    {name:'Inspect roof',freq:'Annual'},
-    {name:'Clean gutters',freq:'Every 6 months'},
-    {name:'Service garage door',freq:'Annual'},
-    {name:'Check weather stripping',freq:'Annual'},
-    {name:'Pest inspection',freq:'Annual'},
+  r5:[ // Entire Home
+    {name:'Replace HVAC filter',freq:'Every 3 months'},{name:'Test smoke detectors',freq:'Monthly'},
+    {name:'Test carbon monoxide detector',freq:'Monthly'},{name:'Clean gutters',freq:'Every 6 months'},
+    {name:'Flush water heater',freq:'Yearly'},{name:'Check for water leaks',freq:'Monthly'},
+    {name:'Inspect roof',freq:'Yearly'},{name:'Clean dryer vent duct',freq:'Yearly'},
+    {name:'Check weather stripping on doors',freq:'Yearly'},{name:'Lubricate garage door springs',freq:'Yearly'},
+    {name:'Test garage door auto-reverse',freq:'Yearly'},{name:'Power wash exterior',freq:'Yearly'},
+    {name:'Check caulking around windows',freq:'Yearly'},{name:'Inspect foundation for cracks',freq:'Yearly'},
+    {name:'Check attic insulation',freq:'Yearly'},{name:'Clean window wells',freq:'Every 6 months'},
+    {name:'Service HVAC system',freq:'Every 6 months'},{name:'Check electrical panel',freq:'Yearly'},
+    {name:'Inspect plumbing for leaks',freq:'Every 6 months'},{name:'Check fire extinguishers',freq:'Yearly'},
+    {name:'Pest control treatment',freq:'Every 3 months'},{name:'Termite inspection',freq:'Yearly'},
+    {name:'Trim trees near house',freq:'Yearly'},{name:'Inspect siding & paint',freq:'Yearly'},
+    {name:'Check driveway for cracks',freq:'Yearly'},{name:'Reverse ceiling fans for season',freq:'Every 6 months'},
   ],
-  l1:[
-    {name:'Family dinner night',freq:'Weekly'},
-    {name:'Schedule family outing',freq:'Monthly'},
-    {name:'Review household budget',freq:'Monthly'},
+  l1:[ // Family
+    {name:'Family dinner night',freq:'Weekly'},{name:'Family outing or activity',freq:'Monthly'},
+    {name:'Monthly budget review',freq:'Monthly'},{name:'Date night',freq:'Weekly'},
+    {name:'Family photo backup',freq:'Monthly'},{name:'Emergency plan review',freq:'Yearly'},
+    {name:'Review insurance policies',freq:'Yearly'},{name:'Update emergency contacts',freq:'Yearly'},
+    {name:'Family game night',freq:'Weekly'},{name:'Plan family vacation',freq:'Yearly'},
   ],
-  l2:[
-    {name:'Grocery run',freq:'Weekly'},
-    {name:'Costco / bulk shopping',freq:'Monthly'},
-    {name:'Pharmacy pickup',freq:'As needed'},
-    {name:'Car wash',freq:'Monthly'},
-    {name:'Vehicle oil change',freq:'Every 3 months'},
+  l2:[ // Errands
+    {name:'Grocery run',freq:'Weekly'},{name:'Costco / bulk shopping',freq:'Monthly'},
+    {name:'Car wash',freq:'Monthly'},{name:'Oil change',freq:'Every 3 months'},
+    {name:'Pharmacy pickup',freq:'As needed'},{name:'Post office run',freq:'As needed'},
+    {name:'Bank / ATM',freq:'Monthly'},{name:'Dry cleaning pickup',freq:'As needed'},
+    {name:'Rotate car tires',freq:'Every 6 months'},{name:'Car registration renewal',freq:'Yearly'},
+    {name:'Return library books',freq:'As needed'},{name:'Pick up prescriptions',freq:'Monthly'},
   ],
-  l3:[
-    {name:'Vet checkup',freq:'Annual'},
-    {name:'Flea & tick prevention',freq:'Monthly'},
-    {name:'Heartworm prevention',freq:'Monthly'},
-    {name:'Grooming appointment',freq:'Every 6 weeks'},
-    {name:'Wash pet bedding',freq:'Weekly'},
-    {name:'Clean pet bowls',freq:'Daily'},
-    {name:'Trim nails',freq:'Monthly'},
+  l3:[ // Pets
+    {name:'Vet checkup',freq:'Yearly'},{name:'Flea & tick treatment',freq:'Monthly'},
+    {name:'Grooming appointment',freq:'Every 6 weeks'},{name:'Wash pet bedding',freq:'Weekly'},
+    {name:'Trim nails',freq:'Monthly'},{name:'Dental cleaning',freq:'Yearly'},
+    {name:'Heartworm prevention',freq:'Monthly'},{name:'Refill pet food',freq:'Monthly'},
+    {name:'Clean food & water bowls',freq:'Weekly'},{name:'Vaccinations',freq:'Yearly'},
+    {name:'Wash pet toys',freq:'Monthly'},{name:'Clean litter box',freq:'Daily'},
+    {name:'Flea comb',freq:'Weekly'},{name:'Update pet ID tags',freq:'Yearly'},
   ],
 };
 
-// Seed tasks with completedAt for history/summary
+
 function seedTask(overrides){
   return {id:'t'+Date.now()+Math.random(),done:false,who:'Anyone',notes:'',repeat:'',completedAt:null,...overrides};
 }
 let tasks = [
   seedTask({name:'Schedule HVAC service',cat:'r5',pri:'High',date:TODAY}),
   seedTask({name:'Pick up dog food',cat:'l3',pri:'Medium',date:TODAY}),
-  seedTask({name:'Book vet checkup',cat:'l3',pri:'High',date:dStr(2),who:'Partner',notes:'Annual shots'}),
+  seedTask({name:'Book vet checkup',cat:'l3',pri:'High',date:dStr(2),who:'Luke',notes:'Annual shots'}),
   seedTask({name:'Grocery run',cat:'l2',pri:'Medium',date:TODAY}),
   seedTask({name:'Clean kitchen counters',cat:'r2',pri:'Low',date:dStr(1)}),
-  seedTask({name:'Date night reservation',cat:'l1',pri:'Medium',date:dStr(4),who:'Me'}),
-  seedTask({name:'Fix bathroom faucet',cat:'r3',pri:'High',date:dStr(2),who:'Me'}),
+  seedTask({name:'Date night reservation',cat:'l1',pri:'Medium',date:dStr(4),who:'Hayley'}),
+  seedTask({name:'Fix bathroom faucet',cat:'r3',pri:'High',date:dStr(2),who:'Hayley'}),
   // Historical completed tasks for demo
   seedTask({name:'Vacuum living room',cat:'r1',pri:'Low',date:dStr(-1),done:true,completedAt:dStr(-1)}),
   seedTask({name:'Clean dishwasher',cat:'r2',pri:'Medium',date:dStr(-3),done:true,completedAt:dStr(-3)}),
@@ -1362,6 +1424,8 @@ document.addEventListener('DOMContentLoaded',function(){
 
   // Init Supabase auto-reconnect
   sbInit();
+  // Build who dropdown from stored users
+  rebuildWhoDropdown();
 
   renderAll();
 });
@@ -1688,14 +1752,9 @@ function renderFolderDrill(main){
     </div>
     <div class="fv-body">
       ${prebuilt.length?`
-      <div class="sec-lbl" style="margin-bottom:10px">Suggested Tasks</div>
-      <div class="prebuilt-grid" id="pb-grid">
-        ${prebuilt.map((p,i)=>`
-          <div class="pb-card" data-idx="${i}">
-            <div class="pb-name">${esc(p.name)}</div>
-            <div class="pb-freq">⏱ ${p.freq}</div>
-            <div class="pb-add">+ Add to tasks</div>
-          </div>`).join('')}
+      <div class="sec-lbl" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        <span>💡 Suggested Tasks</span>
+        <button class="btn btn-ghost btn-xs" id="open-sugg-btn">Browse all ${prebuilt.length} →</button>
       </div>`:''}
       <div class="sec-lbl">Active Tasks (${folderTasks.length})</div>
       <div id="fd-tasks">${folderTasks.length?folderTasks.map(t=>tRowHTML(t)).join(''):`<div class="empty-st"><div class="ei">🎉</div><p>No active tasks here</p></div>`}</div>
@@ -1703,6 +1762,8 @@ function renderFolderDrill(main){
     </div>`;
 
   document.getElementById('fv-back').addEventListener('click',()=>{setView('today');});
+  const suggBtn=document.getElementById('open-sugg-btn');
+  if(suggBtn) suggBtn.addEventListener('click',()=>openSuggSheet(currentFolderId));
   document.getElementById('fv-add-btn').addEventListener('click',()=>{
     populateCatSelect(currentFolderId);
     showOverlay('task-overlay');
@@ -2139,7 +2200,7 @@ async function sendAI(){
   const nSum=notes.map(n=>`[${n.id}] ${n.title}`).join('\n');
   const eSum=events.map(e=>`[${e.id}] ${e.title}: ${e.date} ${e.time}`).join('\n');
   const fSum=[...folders.rooms,...folders.life].map(f=>`[${f.id}] ${f.emoji} ${f.name}`).join(', ');
-  const sys=`You are the HomeBase AI assistant for a couple who own their home in New Braunfels, TX (pets: dog Max, cat Luna).
+  const sys=`You are the HomeBase AI assistant for Hayley and Luke who own their home in New Braunfels, TX. When assigning tasks use 'Hayley', 'Luke', 'Both', or 'Anyone'. (pets: dog Max, cat Luna).
 
 DATA:
 Tasks: ${tSum}
@@ -2396,10 +2457,53 @@ function resetLockTimer(){
 // ════════════════════════════════════════════════
 // AI SETUP
 // ════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════
+// USER MANAGEMENT
+// ════════════════════════════════════════════════
+const DEFAULT_USERS = ['Anyone','Hayley','Luke','Both'];
+
+function getUsers(){
+  const stored = localStorage.getItem('hb_users');
+  return stored ? JSON.parse(stored) : [...DEFAULT_USERS];
+}
+
+function saveUsers(users){
+  localStorage.setItem('hb_users', JSON.stringify(users));
+  rebuildWhoDropdown();
+}
+
+function rebuildWhoDropdown(){
+  const sel = document.getElementById('t-who');
+  if(!sel) return;
+  const users = getUsers();
+  const cur = sel.value;
+  sel.innerHTML = users.map(u=>`<option value="${u}" ${u===cur?'selected':''}>${u}</option>`).join('');
+}
+
+function renderUsersChips(){
+  const el = document.getElementById('users-list');
+  if(!el) return;
+  const users = getUsers();
+  el.innerHTML = users.map(u=>`
+    <span class="user-chip">${u}
+      ${u!=='Anyone'?`<span class="ux" data-u="${u}">✕</span>`:''}
+    </span>`).join('');
+  el.querySelectorAll('.ux').forEach(x=>{
+    x.addEventListener('click',()=>{
+      const users = getUsers().filter(u=>u!==x.dataset.u);
+      saveUsers(users);
+      renderUsersChips();
+    });
+  });
+}
+
 function aiSetupInit(){
   const proxy = localStorage.getItem('hb_ai_proxy')||'';
   const proxyInp = document.getElementById('ai-proxy-inp');
   if(proxyInp) proxyInp.value = proxy;
+  renderUsersChips();
+  rebuildWhoDropdown();
 
   document.getElementById('ai-setup-cancel').addEventListener('click',()=>closeOverlay('ai-setup-overlay'));
   document.getElementById('ai-setup-save').addEventListener('click', async ()=>{
@@ -2416,6 +2520,21 @@ function aiSetupInit(){
     localStorage.setItem('hb_pin', np);
     document.getElementById('new-pin-inp').value='';
     toast('🔐 PIN updated!');
+  });
+  document.getElementById('add-user-btn').addEventListener('click',()=>{
+    const inp = document.getElementById('new-user-inp');
+    const name = inp.value.trim();
+    if(!name){ toast('⚠️ Enter a name'); return; }
+    const users = getUsers();
+    if(users.includes(name)){ toast('Already in list'); return; }
+    users.push(name);
+    saveUsers(users);
+    renderUsersChips();
+    inp.value='';
+    toast('👤 '+name+' added!');
+  });
+  document.getElementById('new-user-inp').addEventListener('keydown',e=>{
+    if(e.key==='Enter') document.getElementById('add-user-btn').click();
   });
 }
 
@@ -2461,6 +2580,70 @@ document.addEventListener('DOMContentLoaded', function(){
   addSettingsBtn();
   // Auto-load AI key inputs if setup modal already in DOM
   aiSetupInit();
+});
+
+
+// ════════════════════════════════════════════════
+// SUGGESTED TASKS SHEET
+// ════════════════════════════════════════════════
+function openSuggSheet(folderId){
+  const prebuilt = PREBUILT[folderId]||[];
+  const folder = [...folders.rooms,...folders.life].find(f=>f.id===folderId);
+  const users = getUsers();
+
+  document.getElementById('sugg-title').textContent = (folder ? folder.emoji+' '+folder.name : 'Suggested Tasks') + ' — '+prebuilt.length+' ideas';
+
+  const scroll = document.getElementById('sugg-scroll');
+  scroll.innerHTML = prebuilt.map((p,i)=>`
+    <div class="sugg-card" id="sc-${i}">
+      <div class="sugg-card-top">
+        <input class="sugg-card-name" value="${esc(p.name)}" id="sn-${i}" aria-label="Task name">
+        <span class="sugg-card-freq" id="sf-${i}" data-freq="${p.freq}">${p.freq}</span>
+      </div>
+      <div class="sugg-card-bottom">
+        <select class="sugg-card-who" id="sw-${i}">
+          ${users.map(u=>`<option value="${u}">${u}</option>`).join('')}
+        </select>
+        <button class="sugg-card-add" data-idx="${i}" data-folder="${folderId}">+ Add</button>
+      </div>
+    </div>`).join('');
+
+  // Wire add buttons
+  scroll.querySelectorAll('.sugg-card-add').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const i = btn.dataset.idx;
+      const name = document.getElementById('sn-'+i).value.trim();
+      const freq = document.getElementById('sf-'+i).dataset.freq;
+      const who = document.getElementById('sw-'+i).value;
+      if(!name) return;
+      addTask({name, cat:btn.dataset.folder, pri:'Medium', date:TODAY, who, notes:'Suggested: '+freq, repeat:''});
+      btn.textContent='✓ Added';
+      btn.style.background='var(--sage)';
+      btn.disabled=true;
+    });
+  });
+
+  document.getElementById('sugg-sheet').classList.add('open');
+}
+
+function closeSuggSheet(){
+  document.getElementById('sugg-sheet').classList.remove('open');
+}
+
+// Init sheet close handlers
+document.addEventListener('DOMContentLoaded',function(){
+  document.getElementById('sugg-close').addEventListener('click', closeSuggSheet);
+  document.getElementById('sugg-sheet').addEventListener('click',e=>{
+    if(e.target===document.getElementById('sugg-sheet')) closeSuggSheet();
+  });
+  // Swipe down to close on mobile
+  let touchStartY=0;
+  const inner = document.getElementById('sugg-inner');
+  inner.addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
+  inner.addEventListener('touchend',e=>{
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    if(dy > 80) closeSuggSheet();
+  },{passive:true});
 });
 
 </script>
@@ -2530,7 +2713,16 @@ document.addEventListener('DOMContentLoaded', function(){
       <input class="ai-key-input" type="text" id="ai-proxy-inp" placeholder="https://my-proxy.username.workers.dev" style="margin-top:8px">
     </div>
     <div class="ai-setup-step">
-      <div class="ai-setup-step-title">Step 3 — Change your PIN</div>
+      <div class="ai-setup-step-title">Step 3 — Household Members</div>
+      <div class="ai-setup-step-desc" style="margin-bottom:10px">Add or remove people for task assignment. These appear in the "Assigned To" dropdown.</div>
+      <div id="users-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:28px;"></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="ai-key-input" type="text" id="new-user-inp" placeholder="Add person (e.g. Emma)" style="flex:1;margin-top:0">
+        <button class="btn btn-ghost btn-sm" id="add-user-btn">Add</button>
+      </div>
+    </div>
+    <div class="ai-setup-step">
+      <div class="ai-setup-step-title">Step 4 — Change your PIN</div>
       <div class="ai-setup-step-desc">Optional — change your app PIN here.</div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
         <input class="ai-key-input" type="password" id="new-pin-inp" placeholder="New 4-digit PIN" maxlength="4" style="width:160px;margin-top:0">
@@ -2541,6 +2733,19 @@ document.addEventListener('DOMContentLoaded', function(){
       <button class="btn btn-ghost" id="ai-setup-cancel">Close</button>
       <button class="btn btn-violet" id="ai-setup-save">Save & Test</button>
     </div>
+  </div>
+</div>
+
+
+<!-- SUGGESTED TASKS SHEET -->
+<div class="sugg-sheet" id="sugg-sheet">
+  <div class="sugg-inner" id="sugg-inner">
+    <div class="sugg-handle"></div>
+    <div class="sugg-header">
+      <div class="sugg-title" id="sugg-title">💡 Suggested Tasks</div>
+      <button class="sugg-close" id="sugg-close">✕</button>
+    </div>
+    <div class="sugg-scroll" id="sugg-scroll"></div>
   </div>
 </div>
 
