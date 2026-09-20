@@ -1,10 +1,12 @@
 # HomeBase v2 — AI orchestrator Worker
-# Deploy: `wrangler deploy` from this folder (see README.md).
+# Deployed by Cloudflare Workers Builds from GitHub (root directory: worker, deploy command: npx wrangler deploy).
+# Manual alternative: `wrangler deploy` from this folder (see README.md).
 
-name = "homebase-ai"
+name = "homebase-proxy"          # existing Worker: https://homebase-proxy.hlchampness.workers.dev
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 # Cron (UTC). 10:30 UTC = 05:30 CDT (/plan), 04:30 UTC = 23:30 CDT (/learn).
 # During CST (Nov–Mar) these land at 04:30 / 22:30 local — one hour early, which is acceptable
@@ -18,11 +20,12 @@ ANTHROPIC_VERSION = "2023-06-01"
 ALLOWED_ORIGIN = "https://hlchampness954.github.io"
 HOUSEHOLD_TZ = "America/Chicago"   # fallback only; each household row carries its own tz
 
-# Secrets — set with `wrangler secret put <NAME>`, never commit them:
+# Secrets — set in the Cloudflare dashboard (Worker → Settings → Variables and Secrets → type Secret),
+# or with `wrangler secret put <NAME>`. Never commit them:
 #   ANTHROPIC_API_KEY           Anthropic API key
 #   SUPABASE_URL                https://<project-ref>.supabase.co
-#   SUPABASE_ANON_KEY           anon key (used only to verify the user's JWT via /auth/v1/user)
-#   SUPABASE_SERVICE_ROLE_KEY   service-role key (all PostgREST calls; every query is household-scoped)
+#   SUPABASE_ANON_KEY           publishable/anon key (used only to verify the user's JWT via /auth/v1/user)
+#   SUPABASE_SERVICE_ROLE_KEY   secret/service-role key (all PostgREST calls; every query is household-scoped)
 
 # Optional KV namespace used for: per-user rate limiting (60 req/min), 1 h weather cache and
 # proposal storage (10 min TTL). The code runs without it — rate limiting is skipped, weather is
