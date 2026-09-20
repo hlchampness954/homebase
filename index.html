@@ -2476,7 +2476,7 @@ function filesCard(entity_type, id, { title = 'Files & photos', extra } = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTH + BOOT
 // ═══════════════════════════════════════════════════════════════════════════
-const BUILD = '2.1.0-p2';
+const BUILD = '2.1.1-p2';
 function authScreen(html) { $('#auth').classList.remove('hidden'); $('#auth-box').innerHTML = html; }
 function showApp() { $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden'); }
 async function boot() {
@@ -2485,9 +2485,11 @@ async function boot() {
   if (DEMO) { await api.load(); S.me = S.person; S.person = resolveActivePerson(); return start(); }
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) return setupScreen();
   try { await api.init(); } catch (e) { return authScreen(`<h1>HomeBase</h1><p class="sub">Couldn’t load Supabase client (${esc(e.message)}). Check your connection.</p>`); }
-  sb.auth.onAuthStateChange((ev, session) => { S.session = session; S.user = session?.user || null; if (ev === 'SIGNED_OUT') location.reload(); });
+  let recovery = /type=recovery/.test(location.hash) || /type=recovery/.test(location.search);
+  sb.auth.onAuthStateChange((ev, session) => { S.session = session; S.user = session?.user || null; if (ev === 'SIGNED_OUT') location.reload(); if (ev === 'PASSWORD_RECOVERY') { recovery = true; newPasswordScreen(); } });
   const { data: { session } } = await sb.auth.getSession(); S.session = session; S.user = session?.user || null;
   if (!session) return signInScreen();
+  if (recovery) return newPasswordScreen();
   await afterSignIn();
 }
 function setupScreen() {
@@ -2506,12 +2508,22 @@ function signInScreen(msg = '', keepEmail = '') {
     <div class="field" id="pwf"><label>Password</label><input id="pw" type="password" autocomplete="current-password"></div>
     <button class="btn btn-primary btn-lg btn-block" id="go">Sign in</button>
     <div class="alt"><button id="magic">Email me a sign-in link instead</button> · <button id="signup">Create account</button></div>
+    <div class="alt" style="margin-top:8px"><button id="forgot">Forgot password?</button></div>
     <div class="alt" style="margin-top:22px"><button id="demo2">Try the demo</button></div>`);
   $('#go').onclick = async () => { const email = $('#em').value.trim(); if (!email || !$('#pw').value) return signInScreen('Enter your email and password first.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithPassword({ email, password: $('#pw').value }); if (error) return signInScreen(error.message, email); await afterSignIn(); };
   $('#pw').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
   $('#magic').onclick = async () => { const email = $('#em').value.trim(); if (!email) return signInScreen('Enter your email first.'); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.', email); };
   $('#signup').onclick = async () => { const email = $('#em').value.trim(); if (!email || $('#pw').value.length < 8) return signInScreen('Type your email and a new password (8+ characters) in the boxes above, then tap Create account.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signUp({ email, password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. Check your email for the confirmation link, then sign in here.', email); };
+  $('#forgot').onclick = async () => { const email = $('#em').value.trim(); if (!email) return signInScreen('Type your email first, then tap Forgot password.'); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname }); signInScreen(error ? error.message : 'Check your email for a reset link — it brings you back here to choose a new password.', email); };
   $('#demo2').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
+}
+// Reached from the password-reset email (Supabase puts type=recovery in the URL and signs the user in)
+function newPasswordScreen(msg = '') {
+  authScreen(`<h1>New password</h1><p class="sub">Choose a password for ${esc(S.user?.email || 'your account')}.</p>${msg ? `<div class="note" style="margin-bottom:12px">${esc(msg)}</div>` : ''}
+    <div class="field"><label>New password (8+ characters)</label><input id="np1" type="password" autocomplete="new-password"></div>
+    <div class="field"><label>Again</label><input id="np2" type="password" autocomplete="new-password"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="npgo">Save and continue</button>`);
+  $('#npgo').onclick = async () => { const a = $('#np1').value, b = $('#np2').value; if (a.length < 8) return newPasswordScreen('Use at least 8 characters.'); if (a !== b) return newPasswordScreen('The two passwords don’t match.'); const { error } = await sb.auth.updateUser({ password: a }); if (error) return newPasswordScreen(error.message); history.replaceState(null, '', location.pathname); toast('Password saved'); await afterSignIn(); };
 }
 async function afterSignIn() {
   const { data: mem, error } = await sb.from('household_members').select('household_id, person_id, households(*)').limit(1);
