@@ -1,7 +1,7 @@
 // HomeBase v2 Worker — offline smoke test. Run: `node worker/test/smoke.mjs`
 // No network, no secrets: only the exported pure helpers are exercised.
 import assert from 'node:assert/strict';
-import { TOOLS, TOOL_SCHEMAS, buildSystemPrompt, parseAnthropicSSE, parseSSE, createMessageAssembler } from '../src/index.js';
+import { TOOLS, TOOL_SCHEMAS, buildSystemPrompt, parseAnthropicSSE, parseSSE, createMessageAssembler, SYSTEM_STATIC, WEB_TOOLS } from '../src/index.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`ok   ${name}`); } catch (e) { console.error(`FAIL ${name}\n     ${e.message}`); process.exitCode = 1; } };
@@ -27,7 +27,7 @@ test('tool schemas are valid Anthropic tool definitions', () => {
     'save_memory', 'update_memory', 'forget_memory', 'bulk_update'];
   for (const n of expected) assert.ok(names.has(n), `missing tool ${n}`);
   const confirm = TOOLS.filter(t => t.confirm).map(t => t.name).sort();
-  assert.deepEqual(confirm, ['bulk_update', 'delete_task', 'forget_memory']);
+  assert.deepEqual(confirm, ['archive_record', 'bulk_update', 'delete_file', 'delete_task', 'forget_memory']);
 });
 
 // ── 2. SSE parser reassembles a streamed tool_use ─────────────────────────
@@ -126,7 +126,8 @@ test('buildSystemPrompt contains the household name, people, snapshot and memori
   assert.ok(prompt.includes('Hayley prefers tulips.'), 'memory');
   assert.ok(prompt.includes('Saturday, September 19'), 'today date');
   assert.ok(prompt.includes('20% rain'), 'weather');
-  assert.ok(/delete_task, forget_memory and bulk_update only create a proposal/.test(prompt), 'tool-use rules');
+  assert.ok(/delete_task, forget_memory, bulk_update and archive_record only create a proposal/.test(SYSTEM_STATIC), 'tool-use rules (static block)');
+  assert.ok(/web_search/.test(SYSTEM_STATIC) && /create_project/.test(SYSTEM_STATIC), 'capabilities (static block)');
   assert.ok(prompt.length < 9000, `prompt too long: ${prompt.length} chars`);
 });
 
@@ -137,3 +138,41 @@ test('buildSystemPrompt survives an empty ctx', () => {
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);
+
+// ── 5. thinking / server-tool blocks round-trip through the assembler ─────
+test('assembler keeps thinking signatures and server tool blocks', () => {
+  const asm = createMessageAssembler();
+  const evs = [
+    { type: 'message_start', message: { id: 'm', model: 'x', usage: { input_tokens: 10, cache_read_input_tokens: 5 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'SIG' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'server_tool_use', id: 'st1', name: 'web_search', input: {} } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"query":"paver price"}' } },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'content_block_start', index: 2, content_block: { type: 'web_search_tool_result', tool_use_id: 'st1', content: [{ type: 'web_search_result', url: 'https://x', title: 'X', encrypted_content: 'e' }] } },
+    { type: 'content_block_stop', index: 2 },
+    { type: 'content_block_start', index: 3, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 3, delta: { type: 'text_delta', text: 'About $4' } },
+    { type: 'content_block_delta', index: 3, delta: { type: 'citations_delta', citation: { type: 'web_search_result_location', url: 'https://x', title: 'X', cited_text: 'a' } } },
+    { type: 'content_block_stop', index: 3 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } },
+  ];
+  const outs = evs.map(e => asm.handle({ event: e.type, data: e })).filter(Boolean);
+  const m = asm.message;
+  assert.equal(m.content[0].signature, 'SIG');
+  assert.equal(m.content[1].input.query, 'paver price');
+  assert.equal(m.content[2].type, 'web_search_tool_result');
+  assert.equal(m.content[3].citations.length, 1);
+  assert.ok(outs.some(o => o.tool?.status === 'start' && /paver price/.test(o.tool.summary)), 'start event');
+  assert.ok(outs.some(o => o.tool?.status === 'done' && /1 result/.test(o.tool.summary)), 'done event');
+  assert.equal(m.usage.cache_read_input_tokens, 5);
+  assert.equal(WEB_TOOLS.length, 2);
+});
+
+test('tool schemas include the generic record tools and create_project', () => {
+  const names = TOOLS.map(t => t.name);
+  for (const n of ['create_project', 'update_project', 'list_records', 'create_record', 'update_record', 'archive_record']) assert.ok(names.includes(n), n);
+  assert.ok(TOOLS.find(t => t.name === 'archive_record').confirm, 'archive_record needs confirmation');
+});
