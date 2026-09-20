@@ -13,9 +13,12 @@ import { planDay, needsAttention, replan, settingsOf, nextStepOf } from '../../s
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tiny utils
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ITER = 8;
-const MAX_TOKENS = 1500;
+const MAX_ITER = 12;
+const MAX_TOKENS = 4096;
 const HISTORY_TURNS = 20;
+const ANTHROPIC_RETRIES = 3;                                 // on 429 / 5xx / overloaded
+const WEB_SEARCH_MAX_USES = 8;
+const WEB_FETCH_MAX_USES = 6;
 const RATE_LIMIT_PER_MIN = 60;
 const PROPOSAL_TTL_S = 600;
 const TOOL_RESULT_MAX_CHARS = 12000;
@@ -270,10 +273,8 @@ export function buildSystemPrompt({ ctx = {}, plan = null, attention = [], memor
   const today = ctx.today || D.todayIn(ctx.tz || DEFAULT_TZ);
   const L = [];
 
-  L.push(`You are HomeBase, the household assistant for ${name} — ${who}'s home in New Braunfels, Texas, shared with ${petText}.`);
-  L.push(`Your job is to keep the house, projects, routines, ${pets[0]?.name || 'Ruby'} and their relationship on track while lowering stress. You have live access to their data through tools: look things up instead of guessing, and act instead of asking for forms.`);
-  L.push('');
   L.push(`NOW: ${D.longDate(today)} (${today}) at ${ctx.now || D.nowHM(ctx.tz || DEFAULT_TZ)} ${ctx.tz || DEFAULT_TZ}. Client: view=${context.view || 'today'}${context.date ? ` date=${context.date}` : ''}${context.device ? ` device=${context.device}` : ''}.`);
+  L.push(`Household: ${name} — ${who}'s home in New Braunfels, Texas, shared with ${petText}.`);
 
   L.push('', 'HOUSEHOLD PROFILE');
   L.push(`People: ${(ctx.people || []).map(p => `${p.name}${p.is_user ? ' (user)' : ''} [${p.id}]`).join('; ') || 'Luke, Hayley'}`);
@@ -312,18 +313,34 @@ export function buildSystemPrompt({ ctx = {}, plan = null, attention = [], memor
   if (!memories.length) L.push('- (nothing stored yet)');
   for (const m of memories) L.push(`- [${m.subject}/${m.kind}, ${confWord(m.confidence)}] ${m.content}${m.id ? ` {id ${m.id}}` : ''}`);
 
-  L.push('', 'HOW TO WORK');
-  L.push('- Use tools for anything about their data. Never invent ids; search or list first, then act. Names may be given loosely ("the HVAC filter rule") — tools resolve names leniently.');
-  L.push('- Act immediately for ordinary, reversible changes: creating, completing, postponing, logging, scheduling, notes, memories. The app shows every action with Undo.');
-  L.push('- delete_task, forget_memory and bulk_update only create a proposal; tell the user in a few words what will happen once they confirm the card.');
-  L.push(`- Dates: use YYYY-MM-DD and household-local HH:MM (${ctx.tz || DEFAULT_TZ}). "Tonight" is today after 17:00; "this weekend" is the next Sat/Sun. Never use the UTC date.`);
-  L.push('- When they state something durable (a preference, a habit, a fact about the house, who does what), call save_memory and finish with "Remembered: …". If you notice a pattern yourself, ask before saving it.');
-  L.push('- Day modes: "I\'m sick", "traveling Tue–Thu", "Friday off" → set_day_mode; it replans and returns what was kept/reduced/moved — summarise that in one sentence.');
-  L.push('- Be concise and warm: one or two sentences unless asked for detail. Short plain lists are fine for tasks; no headings, no tables, no emoji. Do not narrate tool calls — give the outcome.');
-  L.push('- Protect their time and the relationship: prefer less, done well; nudge gently about flowers, date night and rest when relevant, never nag.');
-  L.push('- Ask one short question only when a request is truly ambiguous; otherwise make the sensible choice and say what you did.');
   return L.join('\n');
 }
+
+// Static part of the system prompt (identity + rules). Kept byte-identical between turns so the
+// prompt cache covers tools + this block; everything that changes per turn lives in buildSystemPrompt().
+export const SYSTEM_STATIC = [
+  'You are HomeBase, the household assistant for Luke & Hayley\'s home in New Braunfels, Texas (shared with Ruby the dog). You are their planner, home manager, researcher and everyday chat partner.',
+  'Your job is to keep the house, projects, routines, Ruby and their relationship on track while lowering stress. You have live access to all of their data through tools, and to the web through web_search / web_fetch.',
+  '',
+  'WHAT YOU CAN DO',
+  '- Everything in the app: read and change tasks, calendar, projects (steps, costs), areas, rooms, assets, maintenance rules, routines, plants, pets, lists, notes/vendors, memories and day modes. Specialised tools exist for the common actions; create_record / update_record / list_records / archive_record cover every other table.',
+  '- Research: use web_search (and web_fetch for a specific page) for anything that needs current or outside information — prices, products, materials, contractors and companies near New Braunfels / San Antonio / Austin, how-to guidance, code requirements, weather beyond the forecast. Prefer 2–4 good searches over one; fetch a page when the snippet is not enough (e.g. a price or spec).',
+  '- Budgets & quotes: build line-item estimates with realistic current prices (name the source/store), quantities with a waste factor, labour vs DIY options, and a total with a contingency. Offer to save them as project costs (add_project_cost) and vendor notes (create_note with vendor=true, phone, url).',
+  '- Project setup: when they ask to plan/add a project, use create_project with ordered steps (with phases and time estimates) and cost lines in one call, then summarise. Rank it against existing projects by priority.',
+  '- Normal conversation: if they just want to talk, think something through, or ask a general question, answer like a thoughtful friend — no tools needed.',
+  '',
+  'HOW TO WORK',
+  '- Use tools for anything about their data. Never invent ids; search or list first, then act. Names may be given loosely ("the HVAC filter rule") — tools resolve names leniently.',
+  '- Act immediately for ordinary, reversible changes: creating, completing, postponing, logging, scheduling, notes, memories, records. The app shows every action with Undo. Only ask first when the request is truly ambiguous or would create a lot of structure they did not ask for.',
+  '- delete_task, forget_memory, bulk_update and archive_record only create a proposal; tell the user in a few words what will happen once they confirm the card.',
+  '- Dates: use YYYY-MM-DD and household-local HH:MM (America/Chicago). "Tonight" is today after 17:00; "this weekend" is the next Sat/Sun. Never use the UTC date.',
+  '- When they state something durable (a preference, a habit, a fact about the house, who does what), call save_memory and finish with "Remembered: …". If you notice a pattern yourself, ask before saving it.',
+  '- Day modes: "I\'m sick", "traveling Tue–Thu", "Friday off" → set_day_mode; it replans and returns what was kept/reduced/moved — summarise that in one sentence.',
+  '- Style: match the size of the request. Quick actions and check-ins → one or two warm sentences, no headings. Research, plans, comparisons, budgets → a well-organised answer: short intro, markdown headings or bold labels, bullet lists, a simple table when comparing options or listing costs, numbers with units and a source. Never narrate tool calls — give outcomes. No emoji.',
+  '- When web results disagree or are uncertain, say so briefly and give a range. Quote prices as approximate and dated ("~$48 at Home Depot, Sept 2026").',
+  '- Protect their time and the relationship: prefer less, done well; nudge gently about flowers, date night and rest when relevant, never nag.',
+  '- Ask one short question only when a request is truly ambiguous; otherwise make the sensible choice and say what you did.',
+].join('\n');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool schemas (Anthropic tool-use format). `confirm: true` → proposal instead of execution.
@@ -401,6 +418,21 @@ export const TOOLS = [
   { name: 'update_memory', description: 'Edit a memory\'s wording, confidence (1.0 = confirmed) or status (active | ignored).', input_schema: S({ id: str('Memory uuid'), content: str('New wording'), status: str('active | ignored', { enum: ['active', 'ignored'] }), confidence: num('0-1') }, ['id']) },
   { name: 'forget_memory', description: 'Delete a memory (proposal — user confirms).', confirm: true, input_schema: S({ id: str('Memory uuid') }, ['id']) },
   { name: 'bulk_update', description: 'Apply the same change to many tasks at once (proposal — user confirms).', confirm: true, input_schema: S({ task_ids: { type: 'array', items: str('Task uuid'), description: 'Tasks to change' }, patch: { type: 'object', description: 'Fields to change', properties: TASK_PATCH_PROPS, additionalProperties: false } }, ['task_ids', 'patch']) },
+
+  // ── write: projects (whole) ──
+  { name: 'create_project', description: 'Create a project in one call: name, priority, optional ordered steps (each depends on the previous unless parallel=true) and cost lines. Use after researching a project or when the user asks to add/plan one.', input_schema: S({
+    name: str('Project name'), priority: int('1 = highest; omit to put it after existing projects'), status: str('active | paused | idea', { enum: ['active', 'paused', 'idea'] }), stage: str('Current stage label, e.g. Planning'),
+    description: str('What and why, 1-3 sentences'), budget: num('Total budget estimate'), area: refP('Area/room'), start_date: dateP('Start'), target_date: dateP('Target finish'), notes: str('Notes'),
+    steps: { type: 'array', description: 'Ordered steps', items: S({ title: str('Step'), phase: str('Phase label'), est_min: int('Estimated minutes'), note: str('Note'), parallel: bool('Does not depend on the previous step') }, ['title']) },
+    costs: { type: 'array', description: 'Bill of materials / cost lines', items: S({ item: str('Item'), qty: str('Quantity, free text'), projected: num('Projected cost'), vendor: str('Vendor / store'), note: str('Spec or source') }, ['item']) },
+  }, ['name']) },
+  { name: 'update_project', description: 'Change a project\'s fields: name, priority, status (active | paused | done | idea | archived), stage, description, budget, dates, area, notes.', input_schema: S({ id: refP('Project'), patch: { type: 'object', properties: { name: str('Name'), priority: int('1 = highest'), status: str('active | paused | done | idea | archived', { enum: ['active', 'paused', 'done', 'idea', 'archived'] }), stage: str('Stage'), description: str('Description'), budget: num('Budget'), area: refP('Area'), start_date: dateP('Start'), target_date: dateP('Target'), notes: str('Notes') }, additionalProperties: false } }, ['id', 'patch']) },
+
+  // ── generic records: everything else in the app ──
+  { name: 'list_records', description: 'List rows of any table: areas, rooms, assets, maintenance_rules, routines, plants, pets, lists, list_items, notes, events, projects, project_steps, project_costs, memories, day_modes, people. Optional text filter and simple equality filters.', input_schema: S({ entity: str('Table name'), q: str('Text filter on the name/title column'), filter: { type: 'object', description: 'Equality filters, e.g. {"project_id": "…", "archived": false}', additionalProperties: true }, limit: int('Max rows (default 50)') }, ['entity']) },
+  { name: 'create_record', description: 'Create a row in any table (areas, rooms, assets, maintenance_rules, routines, plants, pets, lists, list_items, notes, events, project_steps, project_costs, day_modes, people). Fields follow the app schema; *_id fields accept a name (resolved leniently). For tasks/projects/memories use their dedicated tools.', input_schema: S({ entity: str('Table name'), data: { type: 'object', description: 'Column values', additionalProperties: true } }, ['entity', 'data']) },
+  { name: 'update_record', description: 'Change fields on a row of any table (same tables as create_record, plus projects and tasks for fields their tools do not cover). Send only the fields to change.', input_schema: S({ entity: str('Table name'), id: refP('Row'), patch: { type: 'object', description: 'Fields to change', additionalProperties: true } }, ['entity', 'id', 'patch']) },
+  { name: 'archive_record', description: 'Archive/deactivate/remove a row (proposal — user confirms). Areas, plants, lists → archived; routines, maintenance rules → inactive; projects → archived; assets, notes, events, steps, costs, list items, rooms, pets → removed.', confirm: true, input_schema: S({ entity: str('Table name'), id: refP('Row'), reason: str('Why') }, ['entity', 'id']) },
 ];
 export const TOOL_SCHEMAS = TOOLS.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
 const TOOL_INDEX = Object.fromEntries(TOOLS.map(t => [t.name, t]));
@@ -408,7 +440,7 @@ const TOOL_INDEX = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime (per request): db, lazy ctx, action log + SSE emitter
 // ─────────────────────────────────────────────────────────────────────────────
-const TABLE_OF = { task: 'tasks', event: 'events', project: 'projects', project_step: 'project_steps', project_cost: 'project_costs', maintenance_rule: 'maintenance_rules', maintenance_log: 'maintenance_log', routine: 'routines', routine_log: 'routine_log', plant: 'plants', plant_observation: 'plant_observations', pet_activity: 'pet_activities', list: 'lists', list_item: 'list_items', note: 'notes', link: 'links', memory: 'memories', day_mode: 'day_modes', household: 'households' };
+const TABLE_OF = { task: 'tasks', event: 'events', project: 'projects', project_step: 'project_steps', project_cost: 'project_costs', maintenance_rule: 'maintenance_rules', maintenance_log: 'maintenance_log', routine: 'routines', routine_log: 'routine_log', plant: 'plants', plant_observation: 'plant_observations', pet_activity: 'pet_activities', list: 'lists', list_item: 'list_items', note: 'notes', link: 'links', memory: 'memories', day_mode: 'day_modes', area: 'areas', room: 'rooms', asset: 'assets', pet: 'pets', person: 'people', household: 'households' };
 
 function makeRuntime(env, { hh, userId = null, personId = null, actor = 'ai', emit = async () => {} }) {
   const db = makeDb(env, hh);
@@ -998,7 +1030,6 @@ const TOOL_IMPL = {
     return { observation: pick(o, ['id', 'plant_id', 'group_name', 'at', 'kind', 'soil_state', 'ph', 'ec', 'water_level', 'note']) };
   },
 
-
   async log_pet_activity({ pet_id, kind, duration_min, focus, note, at }, rt) {
     const pet = pet_id ? await resolve(rt, 'pets', pet_id, { label: 'pet' }) : (await rt.db.select('pets', { limit: 1 }))[0];
     if (!pet) throw new ToolError('No pet found — add one first');
@@ -1098,7 +1129,162 @@ const TOOL_IMPL = {
     rt.dirty();
     return { updated: rows.length, tasks: rows.map(slimTask) };
   },
+
+  // ── projects (whole) ──
+  async create_project(input, rt) {
+    const name = String(input.name || '').trim();
+    if (!name) throw new ToolError('name is required');
+    const existing = await rt.db.select('projects', { select: 'id,priority', status: 'in.(active,paused,idea)' });
+    const priority = input.priority != null ? clampInt(input.priority, 1, 99, 9) : (existing.length ? Math.max(...existing.map(p => p.priority || 0)) + 1 : 1);
+    const row = {
+      name, priority, status: ['active', 'paused', 'idea'].includes(input.status) ? input.status : 'active', stage: input.stage || 'Planning',
+      description: input.description || null, budget: input.budget ?? null, notes: input.notes || null,
+      start_date: isDate(input.start_date) ? input.start_date : null, target_date: isDate(input.target_date) ? input.target_date : null,
+      area_id: input.area ? await resolveId(rt, 'areas', input.area, 'area') : null,
+    };
+    const [p] = await rt.db.insert('projects', row);
+    const steps = []; let prev = null;
+    for (const [i, s] of (input.steps || []).slice(0, 60).entries()) {
+      if (!s?.title) continue;
+      const [st] = await rt.db.insert('project_steps', { project_id: p.id, title: String(s.title).trim(), phase: s.phase || null, sort: i, depends_on: prev && !s.parallel ? [prev.id] : [], est_min: s.est_min ?? null, note: s.note || null });
+      steps.push(st); prev = st;
+    }
+    const costs = [];
+    for (const c of (input.costs || []).slice(0, 80)) {
+      if (!c?.item) continue;
+      const [row2] = await rt.db.insert('project_costs', { project_id: p.id, item: String(c.item).trim(), qty: c.qty || null, projected: c.projected ?? null, vendor: c.vendor || null, note: c.note || null });
+      costs.push(row2);
+    }
+    const projected = costs.reduce((a, c) => a + (Number(c.projected) || 0), 0);
+    await rt.act({ entity_type: 'project', entity_id: p.id, action: 'create', after: { ...slimProject(p), steps: steps.length, costs: costs.length }, summary: `Created project "${p.name}" (P${p.priority}${steps.length ? `, ${steps.length} steps` : ''}${costs.length ? `, ${costs.length} cost lines ~$${Math.round(projected)}` : ''})` });
+    rt.dirty();
+    return { project: slimProject(p), steps: steps.map(slimStep), costs: costs.map(c => pick(c, ['id', 'item', 'qty', 'projected', 'vendor'])), projected_total: projected };
+  },
+
+  async update_project({ id, patch }, rt) {
+    const p = await resolve(rt, 'projects', id, { label: 'project' });
+    const out = {};
+    for (const k of ['name', 'priority', 'status', 'stage', 'description', 'budget', 'start_date', 'target_date', 'notes']) if (patch && k in patch) out[k] = patch[k] === '' ? null : patch[k];
+    if (out.status && !['active', 'paused', 'done', 'idea', 'archived'].includes(out.status)) throw new ToolError('bad status');
+    if (out.status === 'done') out.completed_at = nowIso();
+    if (out.priority != null) out.priority = clampInt(out.priority, 1, 99, p.priority);
+    for (const k of ['start_date', 'target_date']) if (out[k] != null && !isDate(out[k])) throw new ToolError(`${k} must be YYYY-MM-DD`);
+    if (patch && 'area' in patch) out.area_id = await resolveId(rt, 'areas', patch.area, 'area');
+    if (!Object.keys(out).length) throw new ToolError('nothing to change');
+    const [u] = await rt.db.update('projects', { id: p.id }, out);
+    await rt.act({ entity_type: 'project', entity_id: p.id, action: 'update', before: pick(p, Object.keys(out)), after: out, summary: `Updated project "${p.name}"${out.status ? ` → ${out.status}` : ''}` });
+    rt.dirty();
+    return { project: slimProject(u) };
+  },
+
+  // ── generic records ──
+  async list_records({ entity, q, filter, limit }, rt) {
+    const E = entityDef(entity);
+    const query = { order: `${E.order || 'created_at.desc'}`, limit: clampInt(limit, 1, 200, 50) };
+    for (const [k, v] of Object.entries(filter || {})) if (E.fields.includes(k) || k === 'id') query[k] = v;
+    if (q) query[E.nameCol] = `ilike.${likePattern(q)}`;
+    const rows = await rt.db.select(E.table, query);
+    return { entity: E.table, count: rows.length, rows: rows.map(r => E.slim ? E.slim(r) : pick(r, ['id', ...E.fields, 'created_at'])) };
+  },
+
+  async create_record({ entity, data }, rt) {
+    const E = entityDef(entity);
+    if (E.noCreate) throw new ToolError(`Use ${E.noCreate} to create ${E.label}s`);
+    const row = await normalizeRecord(rt, E, data || {}, null);
+    if (E.nameCol && !row[E.nameCol]) throw new ToolError(`${E.nameCol} is required`);
+    const [r] = await rt.db.insert(E.table, row);
+    await rt.act({ entity_type: E.type, entity_id: r.id, action: 'create', after: pick(r, ['id', ...E.fields]), summary: `Added ${E.label} "${r[E.nameCol] || r.id}"` });
+    rt.dirty();
+    return { [E.type]: E.slim ? E.slim(r) : pick(r, ['id', ...E.fields]) };
+  },
+
+  async update_record({ entity, id, patch }, rt) {
+    const E = entityDef(entity);
+    const cur = await resolve(rt, E.table, id, { label: E.label });
+    const out = await normalizeRecord(rt, E, patch || {}, cur);
+    if (!Object.keys(out).length) throw new ToolError('nothing to change');
+    const [u] = await rt.db.update(E.table, { id: cur.id }, out);
+    await rt.act({ entity_type: E.type, entity_id: cur.id, action: 'update', before: pick(cur, Object.keys(out)), after: out, summary: `Updated ${E.label} "${cur[E.nameCol] || cur.id}" (${Object.keys(out).join(', ')})` });
+    rt.dirty();
+    return { [E.type]: E.slim ? E.slim(u) : pick(u, ['id', ...E.fields]) };
+  },
+
+  async archive_record({ entity, id, reason }, rt) {         // executed only via /confirm
+    const E = entityDef(entity);
+    const cur = await resolve(rt, E.table, id, { label: E.label });
+    const label = cur[E.nameCol] || cur.id;
+    if (E.archive.kind === 'flag') {
+      const patch = { [E.archive.col]: E.archive.value };
+      await rt.db.update(E.table, { id: cur.id }, patch);
+      await rt.act({ entity_type: E.type, entity_id: cur.id, action: 'update', before: pick(cur, [E.archive.col]), after: patch, reason, summary: `Archived ${E.label} "${label}"` });
+      rt.dirty();
+      return { archived: label };
+    }
+    await rt.db.del(E.table, { id: cur.id });
+    await rt.act({ entity_type: E.type, entity_id: cur.id, action: 'delete', before: cur, reason, summary: `Removed ${E.label} "${label}"`, undo: { op: 'insert', table: E.table, row: cur } });
+    rt.dirty();
+    return { removed: label };
+  },
 };
+
+// Generic-record registry: which tables the model may touch, with which columns, how refs resolve
+// and what "archive" means for each. Anything not listed here is unreachable through these tools.
+const ENTITIES = {
+  areas: { type: 'area', label: 'area', nameCol: 'name', order: 'sort.asc', fields: ['name', 'kind', 'emoji', 'sort', 'archived'], archive: { kind: 'flag', col: 'archived', value: true } },
+  rooms: { type: 'room', label: 'room', nameCol: 'name', order: 'name.asc', fields: ['name', 'area_id', 'floor', 'dims', 'finishes', 'notes'], refs: { area_id: 'areas' }, archive: { kind: 'delete' } },
+  assets: { type: 'asset', label: 'asset', nameCol: 'name', order: 'name.asc', fields: ['name', 'emoji', 'room_id', 'area_id', 'brand', 'model', 'serial', 'purchased_at', 'warranty_until', 'consumables', 'notes'], refs: { area_id: 'areas', room_id: 'rooms' }, dates: ['purchased_at', 'warranty_until'], archive: { kind: 'delete' } },
+  maintenance_rules: { type: 'maintenance_rule', label: 'maintenance rule', nameCol: 'name', order: 'next_due.asc.nullslast', fields: ['name', 'asset_id', 'interval_days', 'season_months', 'last_done_at', 'next_due', 'instructions', 'importance', 'active'], refs: { asset_id: 'assets' }, dates: ['last_done_at', 'next_due'], slim: slimRule, archive: { kind: 'flag', col: 'active', value: false } },
+  routines: { type: 'routine', label: 'routine', nameCol: 'name', order: 'name.asc', fields: ['name', 'emoji', 'area_id', 'pet_id', 'cadence', 'min_version', 'default_min', 'importance', 'location', 'weather_dependent', 'active'], refs: { area_id: 'areas', pet_id: 'pets' }, slim: slimRoutine, archive: { kind: 'flag', col: 'active', value: false } },
+  plants: { type: 'plant', label: 'plant', nameCol: 'name', order: 'name.asc', fields: ['name', 'species', 'kind', 'group_name', 'location', 'container', 'soil', 'planted_at', 'water_interval_days', 'notes', 'archived'], dates: ['planted_at'], slim: slimPlant, archive: { kind: 'flag', col: 'archived', value: true } },
+  pets: { type: 'pet', label: 'pet', nameCol: 'name', order: 'name.asc', fields: ['name', 'species', 'breed', 'birthdate', 'notes'], dates: ['birthdate'], archive: { kind: 'delete' } },
+  lists: { type: 'list', label: 'list', nameCol: 'name', order: 'name.asc', fields: ['name', 'kind', 'store', 'archived'], archive: { kind: 'flag', col: 'archived', value: true } },
+  list_items: { type: 'list_item', label: 'list item', nameCol: 'text', order: 'sort.asc', fields: ['list_id', 'text', 'qty', 'done', 'project_id', 'sort'], refs: { list_id: 'lists', project_id: 'projects' }, archive: { kind: 'delete' } },
+  notes: { type: 'note', label: 'note', nameCol: 'title', order: 'updated_at.desc', fields: ['title', 'body', 'vendor', 'phone', 'url', 'area_id', 'project_id', 'room_id', 'asset_id', 'pinned'], refs: { area_id: 'areas', project_id: 'projects', room_id: 'rooms', asset_id: 'assets' }, archive: { kind: 'delete' } },
+  events: { type: 'event', label: 'event', nameCol: 'title', order: 'starts_at.asc', fields: ['title', 'kind', 'starts_at', 'ends_at', 'all_day', 'location', 'project_id', 'notes', 'color'], refs: { project_id: 'projects' }, ts: ['starts_at', 'ends_at'], slim: slimEvent, archive: { kind: 'delete' } },
+  projects: { type: 'project', label: 'project', nameCol: 'name', order: 'priority.asc', fields: ['name', 'priority', 'status', 'stage', 'description', 'budget', 'room_id', 'area_id', 'start_date', 'target_date', 'notes'], refs: { area_id: 'areas', room_id: 'rooms' }, dates: ['start_date', 'target_date'], slim: slimProject, noCreate: 'create_project', archive: { kind: 'flag', col: 'status', value: 'archived' } },
+  project_steps: { type: 'project_step', label: 'step', nameCol: 'title', order: 'sort.asc', fields: ['project_id', 'title', 'phase', 'sort', 'status', 'depends_on', 'est_min', 'actual_min', 'note'], refs: { project_id: 'projects' }, slim: slimStep, archive: { kind: 'delete' } },
+  project_costs: { type: 'project_cost', label: 'cost line', nameCol: 'item', order: 'created_at.asc', fields: ['project_id', 'item', 'qty', 'projected', 'actual', 'vendor', 'purchased_at', 'note'], refs: { project_id: 'projects' }, dates: ['purchased_at'], archive: { kind: 'delete' } },
+  day_modes: { type: 'day_mode', label: 'day mode', nameCol: 'mode', order: 'date.asc', fields: ['date', 'mode', 'person_id', 'project_id', 'capacity_override_min', 'note'], refs: { person_id: 'people', project_id: 'projects' }, dates: ['date'], archive: { kind: 'delete' } },
+  people: { type: 'person', label: 'person', nameCol: 'name', order: 'sort.asc', fields: ['name', 'color', 'sort'], archive: { kind: 'delete' } },
+  tasks: { type: 'task', label: 'task', nameCol: 'title', order: 'due_date.asc.nullslast', fields: ['title', 'notes', 'importance', 'due_date', 'window_start', 'window_end', 'duration_min', 'location', 'weather_dependent', 'energy', 'area_id', 'project_id', 'step_id', 'room_id', 'asset_id', 'assignee_id'], refs: { area_id: 'areas', project_id: 'projects', room_id: 'rooms', asset_id: 'assets', assignee_id: 'people' }, dates: ['due_date', 'window_start', 'window_end'], slim: slimTask, noCreate: 'create_task', archive: { kind: 'flag', col: 'status', value: 'cancelled' } },
+  memories: { type: 'memory', label: 'memory', nameCol: 'content', order: 'confidence.desc', fields: ['subject', 'kind', 'content', 'confidence', 'status', 'entity_type', 'entity_id', 'data'], slim: slimMemory, noCreate: 'save_memory', archive: { kind: 'flag', col: 'status', value: 'ignored' } },
+};
+const ENTITY_ALIAS = { area: 'areas', room: 'rooms', asset: 'assets', equipment: 'assets', maintenance: 'maintenance_rules', maintenance_rule: 'maintenance_rules', rule: 'maintenance_rules', routine: 'routines', plant: 'plants', pet: 'pets', list: 'lists', shopping_list: 'lists', list_item: 'list_items', item: 'list_items', note: 'notes', vendor: 'notes', vendors: 'notes', contact: 'notes', event: 'events', calendar: 'events', project: 'projects', step: 'project_steps', steps: 'project_steps', project_step: 'project_steps', cost: 'project_costs', costs: 'project_costs', project_cost: 'project_costs', day_mode: 'day_modes', person: 'people', task: 'tasks', memory: 'memories' };
+function entityDef(entity) {
+  const key = String(entity || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const E = ENTITIES[key] || ENTITIES[ENTITY_ALIAS[key]];
+  if (!E) throw new ToolError(`Unknown entity "${entity}". One of: ${Object.keys(ENTITIES).join(', ')}`);
+  return { table: ENTITIES[key] ? key : ENTITY_ALIAS[key], ...E };
+}
+// Whitelist + coerce a record for insert/patch: refs by name, dates, timestamps, rules, jsonb.
+async function normalizeRecord(rt, E, data, cur) {
+  const out = {};
+  for (const [k, v] of Object.entries(data || {})) {
+    if (k === 'id' || k === 'household_id') continue;
+    const col = E.refs && !E.fields.includes(k) && E.fields.includes(`${k}_id`) ? `${k}_id` : k;   // "area": "Kitchen" → area_id
+    if (!E.fields.includes(col)) throw new ToolError(`${E.label} has no field "${k}" (allowed: ${E.fields.join(', ')})`);
+    let val = v === '' ? null : v;
+    if (E.refs?.[col] && val != null && !isUuid(String(val))) val = await resolveId(rt, E.refs[col], val, col.replace(/_id$/, ''));
+    if (E.dates?.includes(col) && val != null && !isDate(val)) throw new ToolError(`${col} must be YYYY-MM-DD`);
+    if (E.ts?.includes(col) && val != null) val = normalizeTs(val, rt.tz, col === 'ends_at' ? '10:00' : '09:00');
+    if (col === 'cadence' && val != null) { val = normalizeRule(val); if (!val?.freq) throw new ToolError('cadence needs {freq: daily|weekly|monthly|yearly, interval, byweekday?, anchor?}'); }
+    if (col === 'importance' && val != null && !['must', 'should', 'nice'].includes(val)) throw new ToolError('importance must be must | should | nice');
+    if (['interval_days', 'default_min', 'est_min', 'actual_min', 'sort', 'water_interval_days', 'capacity_override_min', 'duration_min', 'priority'].includes(col) && val != null) val = clampInt(val, 0, 100000, null);
+    out[col] = val;
+  }
+  if (E.table === 'events' && !cur && out.starts_at && !out.ends_at && !out.all_day) out.ends_at = new Date(+new Date(out.starts_at) + 3600e3).toISOString();
+  if (E.table === 'maintenance_rules') {
+    const interval = out.interval_days ?? cur?.interval_days;
+    const last = 'last_done_at' in out ? out.last_done_at : cur?.last_done_at;
+    if (!('next_due' in out) && interval && (('last_done_at' in out) || (!cur && !out.next_due))) out.next_due = last ? D.addDays(last, interval) : rt.today;
+  }
+  if (E.table === 'list_items' && !cur && !out.list_id) throw new ToolError('list_id (or list name) is required');
+  if (E.table === 'project_steps' && !cur && out.project_id && out.sort == null) {
+    const steps = await rt.db.select('project_steps', { project_id: out.project_id, select: 'sort', order: 'sort.desc', limit: 1 });
+    out.sort = steps.length ? steps[0].sort + 1 : 0;
+  }
+  return out;
+}
 
 // Reversal of a replan (plan §6.6): tasks moved by replan:* and untouched since go back to `before`
 async function restoreReplanned(rt, dates) {
@@ -1144,6 +1330,7 @@ async function proposalSummary(rt, tool, input) {
   if (tool === 'delete_task') { const t = await resolveTask(rt, input.id); input.id = t.id; return `Remove task "${t.title}"${t.due_date ? ` (due ${t.due_date})` : ''}`; }
   if (tool === 'forget_memory') { const [m] = await rt.db.select('memories', { id: input.id }); if (!m) throw new ToolError('No memory with that id'); return `Forget: "${m.content}"`; }
   if (tool === 'bulk_update') { const p = await normalizeTaskPatch(rt, input.patch || {}); return `Change ${(input.task_ids || []).length} tasks: ${Object.entries(p).map(([k, v]) => `${k} → ${v ?? 'cleared'}`).join(', ')}`; }
+  if (tool === 'archive_record') { const E = entityDef(input.entity); const r = await resolve(rt, E.table, input.id, { label: E.label }); input.id = r.id; input.entity = E.table; return `${E.archive.kind === 'flag' ? 'Archive' : 'Remove'} ${E.label} "${r[E.nameCol] || r.id}"`; }
   return `${tool} ${JSON.stringify(input)}`;
 }
 
@@ -1172,14 +1359,18 @@ async function runTool(rt, name, input, { bypassConfirm = false } = {}) {
   }
 }
 
-const TOOL_VERB = { search_everything: 'Searching', get_today: 'Checking the plan', list_tasks: 'Listing tasks', get_calendar: 'Reading the calendar', find_open_time: 'Looking for free time', list_projects: 'Checking projects', get_project: 'Opening project', list_maintenance: 'Checking maintenance', list_plants: 'Checking plants', get_pet_history: 'Checking pet history', search_memory: 'Recalling', search_history: 'Searching history', get_weather: 'Checking the weather', create_task: 'Adding task', update_task: 'Updating task', complete_task: 'Completing', postpone_task: 'Postponing', delete_task: 'Proposing removal', create_event: 'Adding event', move_event: 'Moving event', create_work_block: 'Reserving time', set_day_mode: 'Replanning', replan_day: 'Replanning the day', replan_week: 'Replanning the week', update_project_step: 'Updating step', add_project_step: 'Adding step', add_project_cost: 'Adding cost', record_maintenance: 'Logging maintenance', log_plant_observation: 'Logging plant care', log_pet_activity: 'Logging activity', log_routine: 'Logging routine', add_list_item: 'Adding to list', create_note: 'Saving note', link: 'Linking', save_memory: 'Remembering', update_memory: 'Updating memory', forget_memory: 'Proposing to forget', bulk_update: 'Proposing bulk change' };
+const TOOL_VERB = { search_everything: 'Searching', get_today: 'Checking the plan', list_tasks: 'Listing tasks', get_calendar: 'Reading the calendar', find_open_time: 'Looking for free time', list_projects: 'Checking projects', get_project: 'Opening project', list_maintenance: 'Checking maintenance', list_plants: 'Checking plants', get_pet_history: 'Checking pet history', search_memory: 'Recalling', search_history: 'Searching history', get_weather: 'Checking the weather', create_task: 'Adding task', update_task: 'Updating task', complete_task: 'Completing', postpone_task: 'Postponing', delete_task: 'Proposing removal', create_event: 'Adding event', move_event: 'Moving event', create_work_block: 'Reserving time', set_day_mode: 'Replanning', replan_day: 'Replanning the day', replan_week: 'Replanning the week', update_project_step: 'Updating step', add_project_step: 'Adding step', add_project_cost: 'Adding cost', record_maintenance: 'Logging maintenance', log_plant_observation: 'Logging plant care', log_pet_activity: 'Logging activity', log_routine: 'Logging routine', add_list_item: 'Adding to list', create_note: 'Saving note', link: 'Linking', save_memory: 'Remembering', update_memory: 'Updating memory', forget_memory: 'Proposing to forget', bulk_update: 'Proposing bulk change', create_project: 'Creating project', update_project: 'Updating project', list_records: 'Looking up', create_record: 'Adding', update_record: 'Updating', archive_record: 'Proposing to archive', web_search: 'Searching the web', web_fetch: 'Reading page' };
 function describeCall(name, input = {}) {
-  const hint = ['title', 'q', 'text', 'content', 'item', 'id', 'task_id', 'rule_id', 'routine_id', 'plant_id', 'project_id', 'mode', 'date', 'to_date'].map(k => input[k]).find(v => typeof v === 'string' && v && !isUuid(v));
+  const hint = ['title', 'name', 'q', 'text', 'content', 'item', 'id', 'task_id', 'rule_id', 'routine_id', 'plant_id', 'project_id', 'mode', 'date', 'to_date', 'entity'].map(k => input[k] ?? input.data?.[k]).find(v => typeof v === 'string' && v && !isUuid(v));
   return `${TOOL_VERB[name] || name.replace(/_/g, ' ')}${hint ? ` · ${String(hint).slice(0, 60)}` : ''}…`;
 }
 function describeResult(name, r = {}) {
   if (r.summary) return r.summary;
   if (r.remembered) return `Remembered: ${r.remembered}`;
+  if (r.project?.name) return `"${r.project.name}"${r.steps ? ` · ${r.steps.length} steps` : ''}${r.costs?.length ? ` · ${r.costs.length} costs` : ''}`;
+  if (r.count != null && r.rows) return `${r.count} ${r.entity || 'rows'}`;
+  if (r.archived) return `Archived "${r.archived}"`;
+  if (r.removed) return `Removed "${r.removed}"`;
   if (r.task?.title) return `"${r.task.title}"${r.next ? ` · next ${r.next.due_date || r.next.window_start}` : ''}`;
   if (r.event?.title) return `"${r.event.title}"`;
   if (Array.isArray(r.tasks)) return `${r.tasks.length} tasks`;
@@ -1210,9 +1401,14 @@ export function parseSSE(buffer) {
   return { events, rest };
 }
 
+// Handles every block type the Messages API streams today: text (+citations), tool_use, thinking
+// (+signature — required when the message is sent back in the tool loop), redacted_thinking,
+// server_tool_use (web_search / web_fetch) and their *_tool_result blocks. Returns {text} for text
+// deltas and {tool: {...}} when a server-side tool starts or finishes, so the UI can show progress.
 export function createMessageAssembler() {
-  const message = { id: null, model: null, role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } };
+  const message = { id: null, model: null, role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } };
   const partial = {};
+  const setUsage = u => { if (!u) return; for (const k of Object.keys(message.usage)) if (u[k] != null) message.usage[k] = u[k]; };
   return {
     message,
     handle(ev) {
@@ -1221,35 +1417,44 @@ export function createMessageAssembler() {
       switch (d.type) {
         case 'message_start':
           Object.assign(message, pick(d.message || {}, ['id', 'model']));
-          message.usage.input_tokens = d.message?.usage?.input_tokens || 0;
-          message.usage.output_tokens = d.message?.usage?.output_tokens || 0;
+          setUsage(d.message?.usage);
           return null;
         case 'content_block_start': {
           const b = { ...d.content_block };
-          if (b.type === 'text') b.text = b.text || '';
-          if (b.type === 'tool_use') { b.input = b.input && Object.keys(b.input).length ? b.input : {}; partial[d.index] = ''; }
+          if (b.type === 'text') { b.text = b.text || ''; if (!Array.isArray(b.citations)) delete b.citations; }
+          if (b.type === 'thinking') b.thinking = b.thinking || '';
+          if (b.type === 'tool_use' || b.type === 'server_tool_use') { b.input = b.input && Object.keys(b.input).length ? b.input : {}; partial[d.index] = ''; }
           message.content[d.index] = b;
+          if (b.type === 'web_search_tool_result' || b.type === 'web_fetch_tool_result') {
+            const n = Array.isArray(b.content) ? b.content.length : 0;
+            const err = !Array.isArray(b.content) && b.content?.type?.includes('error') ? b.content.error_code : null;
+            return { tool: { id: b.tool_use_id, name: b.type === 'web_search_tool_result' ? 'web_search' : 'web_fetch', status: 'done', summary: err ? `Web lookup failed (${err})` : b.type === 'web_search_tool_result' ? `Found ${n} result${n === 1 ? '' : 's'}` : 'Read the page' } };
+          }
           return null;
         }
         case 'content_block_delta': {
           const b = message.content[d.index]; if (!b) return null;
-          if (d.delta?.type === 'text_delta') { b.text += d.delta.text; return { text: d.delta.text }; }
-          if (d.delta?.type === 'input_json_delta') { partial[d.index] = (partial[d.index] || '') + d.delta.partial_json; }
+          const t = d.delta?.type;
+          if (t === 'text_delta') { b.text += d.delta.text; return { text: d.delta.text }; }
+          if (t === 'input_json_delta') { partial[d.index] = (partial[d.index] || '') + d.delta.partial_json; return null; }
+          if (t === 'thinking_delta') { b.thinking += d.delta.thinking; return null; }
+          if (t === 'signature_delta') { b.signature = (b.signature || '') + d.delta.signature; return null; }
+          if (t === 'citations_delta' && d.delta.citation) { (b.citations ||= []).push(d.delta.citation); return null; }
           return null;
         }
         case 'content_block_stop': {
           const b = message.content[d.index];
-          if (b?.type === 'tool_use' && partial[d.index] != null) {
+          if ((b?.type === 'tool_use' || b?.type === 'server_tool_use') && partial[d.index] != null) {
             const raw = partial[d.index].trim();
             if (raw) { try { b.input = JSON.parse(raw); } catch { b.input = { _unparsed: raw }; } }
             delete partial[d.index];
+            if (b.type === 'server_tool_use') return { tool: { id: b.id, name: b.name, status: 'start', summary: b.name === 'web_fetch' ? `Reading ${String(b.input?.url || '').replace(/^https?:\/\//, '').slice(0, 70)}…` : `Searching the web · ${String(b.input?.query || '').slice(0, 70)}…` } };
           }
           return null;
         }
         case 'message_delta':
           if (d.delta?.stop_reason) message.stop_reason = d.delta.stop_reason;
-          if (d.usage?.output_tokens != null) message.usage.output_tokens = d.usage.output_tokens;
-          if (d.usage?.input_tokens != null) message.usage.input_tokens = d.usage.input_tokens;
+          setUsage(d.usage);
           return null;
         case 'error':
           throw new Error(`Anthropic stream error: ${d.error?.message || JSON.stringify(d)}`);
@@ -1269,21 +1474,60 @@ export function parseAnthropicSSE(text) {
 }
 function message_cleanup(m) { m.content = m.content.filter(Boolean); }
 
-async function streamAnthropic(env, payload, onText) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01', 'content-type': 'application/json', accept: 'text/event-stream' },
-    body: JSON.stringify({ ...payload, stream: true }),
-    signal: timeoutSignal(120000),
-  });
-  if (!res.ok) { const t = await res.text(); throw new HttpError(502, `Anthropic ${res.status}: ${t.slice(0, 400)}`); }
+// Server-side tools (executed by Anthropic, never dispatched locally)
+export const WEB_TOOLS = [
+  { type: 'web_search_20250305', name: 'web_search', max_uses: WEB_SEARCH_MAX_USES, user_location: { type: 'approximate', city: 'New Braunfels', region: 'Texas', country: 'US', timezone: DEFAULT_TZ } },
+  { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: WEB_FETCH_MAX_USES, max_content_tokens: 20000 },
+];
+const ANTHROPIC_BETAS = 'web-fetch-2025-09-10';
+
+function friendlyAnthropicError(status, body) {
+  let msg = ''; let type = '';
+  try { const j = JSON.parse(body); msg = j?.error?.message || ''; type = j?.error?.type || ''; } catch { msg = String(body || '').slice(0, 300); }
+  if (status === 429 || type === 'rate_limit_error') return 'The AI hit its per-minute rate limit — wait ~30 seconds and try again.';
+  if (status === 529 || type === 'overloaded_error') return 'Anthropic is overloaded right now — try again in a moment.';
+  if (status === 401 || type === 'authentication_error') return 'The AI key is invalid or missing — check the ANTHROPIC_API_KEY secret.';
+  if (/credit|billing|balance/i.test(msg)) return 'The Anthropic account is out of credit — add credits at console.anthropic.com.';
+  return `AI request failed (${status}${type ? ` ${type}` : ''}): ${msg.slice(0, 300)}`;
+}
+
+async function streamAnthropic(env, payload, onText, onTool = async () => {}) {
+  const body = JSON.stringify({ ...payload, stream: true });
+  const headers = { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01', 'anthropic-beta': ANTHROPIC_BETAS, 'content-type': 'application/json', accept: 'text/event-stream' };
+  let res, lastErr;
+  for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, Math.min(8000, 1500 * 2 ** (attempt - 1)) + Math.random() * 500));
+    try { res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers, body, signal: timeoutSignal(150000) }); }
+    catch (e) { lastErr = new HttpError(502, `Anthropic unreachable: ${e.message}`); continue; }
+    if (res.ok) break;
+    const text = await res.text();
+    lastErr = new HttpError(502, friendlyAnthropicError(res.status, text));
+    lastErr.detail = `Anthropic ${res.status}: ${text.slice(0, 600)}`;
+    const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
+    if (!retryable) break;
+    const ra = Number(res.headers.get('retry-after'));
+    if (ra > 0 && ra <= 20) await new Promise(r => setTimeout(r, ra * 1000));
+    res = null;
+  }
+  if (!res || !res.ok) throw lastErr;
   const asm = createMessageAssembler();
   const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
-  const pump = async (chunk) => { buf += chunk; const { events, rest } = parseSSE(buf); buf = rest; for (const ev of events) { const out = asm.handle(ev); if (out?.text) await onText(out.text); } };
+  const pump = async (chunk) => { buf += chunk; const { events, rest } = parseSSE(buf); buf = rest; for (const ev of events) { const out = asm.handle(ev); if (out?.text) await onText(out.text); if (out?.tool) await onTool(out.tool); } };
   for (;;) { const { done, value } = await reader.read(); if (done) break; await pump(dec.decode(value, { stream: true })); }
   await pump(dec.decode() + '\n\n');
   message_cleanup(asm.message);
   return asm.message;
+}
+
+// Citations from web results → a compact sources list for the reply
+function collectSources(content) {
+  const out = [];
+  for (const b of content || []) {
+    if (b.type === 'text') for (const c of b.citations || []) if (c.url) out.push({ url: c.url, title: c.title || c.url });
+    if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (r.type === 'web_search_result' && r.url) out.push({ url: r.url, title: r.title || r.url, _search: true });
+  }
+  const cited = uniqBy(out.filter(s => !s._search), s => s.url);
+  return (cited.length ? cited : uniqBy(out, s => s.url).slice(0, 5)).slice(0, 8).map(s => pick(s, ['url', 'title']));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1319,40 +1563,58 @@ async function runChat(env, auth, body, message, send) {
   ]);
   const plan = planDay(ctx.today, ctx);
   const attention = needsAttention(ctx);
-  const system = buildSystemPrompt({ ctx, plan, attention, memories: mem.memories, context });
+  // Prompt cache: tools + SYSTEM_STATIC are byte-identical every turn → cached; the snapshot block changes.
+  const system = [
+    { type: 'text', text: SYSTEM_STATIC, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: buildSystemPrompt({ ctx, plan, attention, memories: mem.memories, context }) },
+  ];
   const messages = sanitizeHistory(history.reverse());
   messages.push({ role: 'user', content: [{ type: 'text', text: message }] });
   db.insert('ai_messages', { thread_id: thread.id, role: 'user', content: [{ type: 'text', text: message }], text: message }).catch(e => console.error('persist user', e.message));
 
-  const usage = { input_tokens: 0, output_tokens: 0 };
-  const toolCalls = [], texts = [];
+  const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const toolCalls = [], texts = [], sources = [];
+  const tools = [...TOOL_SCHEMAS, ...WEB_TOOLS];
   let finished = false;
-  for (let i = 0; i < MAX_ITER; i++) {
-    const msg = await streamAnthropic(env, { model: env.MODEL, system, messages, tools: TOOL_SCHEMAS, max_tokens: MAX_TOKENS }, delta => send('text', { delta }));
-    usage.input_tokens += msg.usage.input_tokens || 0; usage.output_tokens += msg.usage.output_tokens || 0;
-    for (const b of msg.content) if (b.type === 'text' && b.text) texts.push(b.text);
-    const uses = msg.content.filter(b => b.type === 'tool_use');
-    if (msg.stop_reason !== 'tool_use' || !uses.length) { finished = true; break; }
-    messages.push({ role: 'assistant', content: msg.content });
-    const results = [];
-    for (const u of uses) {
-      await send('tool', { name: u.name, status: 'start', summary: describeCall(u.name, u.input) });
-      const result = await runTool(rt, u.name, u.input || {});
-      toolCalls.push({ name: u.name, input: u.input, ok: !result?.error, error: result?.error || null });
-      await send('tool', { name: u.name, status: 'done', summary: result?.error ? `Couldn't: ${result.error}` : describeResult(u.name, result) });
-      results.push({ type: 'tool_result', tool_use_id: u.id, content: truncate(JSON.stringify(result)), ...(result?.error ? { is_error: true } : {}) });
+  const onTool = t => { if (t.status === 'start') toolCalls.push({ name: t.name, input: { summary: t.summary }, ok: true, error: null }); return send('tool', t); };
+  try {
+    for (let i = 0; i < MAX_ITER; i++) {
+      const msg = await streamAnthropic(env, { model: env.MODEL, system, messages, tools, max_tokens: MAX_TOKENS }, delta => send('text', { delta }), onTool);
+      for (const k of Object.keys(usage)) usage[k] += msg.usage[k] || 0;
+      for (const b of msg.content) if (b.type === 'text' && b.text) texts.push(b.text);
+      sources.push(...collectSources(msg.content));
+      if (msg.stop_reason === 'pause_turn') { messages.push({ role: 'assistant', content: msg.content }); continue; }   // long web-tool turn: let it carry on
+      const uses = msg.content.filter(b => b.type === 'tool_use');
+      if (msg.stop_reason !== 'tool_use' || !uses.length) { finished = true; break; }
+      messages.push({ role: 'assistant', content: msg.content });
+      const results = [];
+      for (const u of uses) {
+        await send('tool', { id: u.id, name: u.name, status: 'start', summary: describeCall(u.name, u.input) });
+        const result = await runTool(rt, u.name, u.input || {});
+        toolCalls.push({ name: u.name, input: u.input, ok: !result?.error, error: result?.error || null });
+        await send('tool', { id: u.id, name: u.name, status: 'done', summary: result?.error ? `Couldn't: ${result.error}` : describeResult(u.name, result) });
+        results.push({ type: 'tool_result', tool_use_id: u.id, content: truncate(JSON.stringify(result)), ...(result?.error ? { is_error: true } : {}) });
+      }
+      messages.push({ role: 'user', content: results });
     }
-    messages.push({ role: 'user', content: results });
+    if (!finished) { const t = 'I did what I could in this turn — the actions above went through; ask me to continue if something is still missing.'; texts.push(t); await send('text', { delta: t }); }
+  } catch (e) {
+    // Persist what was said before the failure so the thread stays coherent, then surface the error.
+    const text = texts.join('\n').trim();
+    const errText = e.message || String(e);
+    await db.insert('ai_messages', { thread_id: thread.id, role: 'assistant', content: [{ type: 'text', text: text || `(error: ${errText})` }], text: text ? `${text}\n\n⚠️ ${errText}` : `⚠️ ${errText}`, tool_calls: toolCalls, actions: rt.actions }).catch(() => {});
+    throw e;
   }
-  if (!finished) { const t = 'I did what I could in this turn — the actions above went through; ask me to continue if something is still missing.'; texts.push(t); await send('text', { delta: t }); }
 
   const text = texts.join('\n').trim();
+  const srcs = uniqBy(sources, s => s.url).slice(0, 8);
+  if (srcs.length) await send('sources', { sources: srcs });
   await Promise.all([
-    db.insert('ai_messages', { thread_id: thread.id, role: 'assistant', content: text ? [{ type: 'text', text }] : [], text, tool_calls: toolCalls, actions: rt.actions, tokens_in: usage.input_tokens, tokens_out: usage.output_tokens }).catch(e => console.error('persist assistant', e.message)),
+    db.insert('ai_messages', { thread_id: thread.id, role: 'assistant', content: text ? [{ type: 'text', text }] : [], text, tool_calls: toolCalls, actions: rt.actions, tokens_in: usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens, tokens_out: usage.output_tokens }).catch(e => console.error('persist assistant', e.message)),
     db.update('ai_threads', { id: thread.id }, { updated_at: nowIso() }).catch(() => {}),
     mem.stamp,
   ]);
-  await send('done', { thread_id: thread.id, usage, actions: rt.actions, proposals: rt.proposals.map(p => pick(p, ['id', 'summary', 'tool'])) });
+  await send('done', { thread_id: thread.id, usage, sources: srcs, actions: rt.actions, proposals: rt.proposals.map(p => pick(p, ['id', 'summary', 'tool'])) });
 }
 
 async function handleChat(req, env, auth, cors, waitUntil) {
@@ -1362,7 +1624,7 @@ async function handleChat(req, env, auth, cors, waitUntil) {
   if (!env.ANTHROPIC_API_KEY) throw new HttpError(500, 'ANTHROPIC_API_KEY is not configured');
   const { response, send, close } = sseStream(cors);
   const work = runChat(env, auth, body, message, send)
-    .catch(e => { console.error('chat', e); return send('error', { message: e.message || String(e) }); })
+    .catch(e => { console.error('chat', e.message || String(e), e.detail || '', e.stack || ''); return send('error', { message: e.message || String(e) }); })
     .finally(close);
   waitUntil(work);
   return response;
@@ -1392,13 +1654,14 @@ async function handleUndo(req, env, auth) {
   const steps = [body, body.also].filter(Boolean);
   const done = [];
   for (const u of steps) {
-    if (!u || !UNDO_TABLES.has(u.table) || !u.id) throw new HttpError(400, 'Bad undo descriptor');
+    if (!u || !UNDO_TABLES.has(u.table) || !(u.id || u.row?.id)) throw new HttpError(400, 'Bad undo descriptor');
     if (u.op === 'delete') await db.del(u.table, { id: u.id });
     else if (u.op === 'update' && u.patch && typeof u.patch === 'object') await db.update(u.table, { id: u.id }, u.patch);
+    else if (u.op === 'insert' && u.row && typeof u.row === 'object') { const { household_id, ...row } = u.row; await db.upsert(u.table, row, 'id'); }
     else throw new HttpError(400, 'Bad undo op');
     done.push(`${u.op} ${u.table}`);
   }
-  try { await db.insert('activity_log', { actor: auth.personId || 'user', entity_type: body.table.replace(/s$/, ''), entity_id: body.id, action: 'undo', after: body, reason: 'undo ai action' }); } catch {}
+  try { await db.insert('activity_log', { actor: auth.personId || 'user', entity_type: body.table.replace(/s$/, ''), entity_id: body.id || body.row?.id || null, action: 'undo', after: body, reason: 'undo ai action' }); } catch {}
   return { ok: true, done };
 }
 
