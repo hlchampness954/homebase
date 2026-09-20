@@ -9,7 +9,7 @@ function contextLine(t) {
   const sd = D.dateOf(t.scheduled_start, S.tz); if (sd && sd !== t.due_date) parts.push(`${esc(D.humanDate(sd, today))} ${esc(D.fmtHM(D.timeOf(t.scheduled_start, S.tz)))}`);
   if (t.project_id) parts.push(esc(projOf(t.project_id)?.name || '')); else if (t.area_id) parts.push(esc(areaOf(t.area_id)?.name || ''));
   if (t.recurrence) parts.push('↻ ' + esc(R.describeRule(t.recurrence)));
-  if (t.assignee_id && t.assignee_id !== S.person?.id) parts.push(esc(personOf(t.assignee_id)?.name || ''));
+  { const ppl = taskPeople(t).filter(id => id !== S.person?.id).map(id => personOf(id)?.name).filter(Boolean); if (ppl.length) parts.push(esc(ppl.join(' + '))); }
   if (t.duration_min) parts.push(mins(t.duration_min));
   return parts.join(' · ');
 }
@@ -265,7 +265,7 @@ renderers.tasks = function renderTasks(params) {
     item('today', '☀️', 'Today', open.filter(t => t.due_date && t.due_date <= today).length),
     item('week', '📆', 'This week', open.filter(t => t.due_date && t.due_date <= D.addDays(today, 7)).length),
     item('all', '📋', 'All open', open.length),
-    item('mine', '👤', 'Mine', open.filter(t => t.assignee_id === S.person?.id).length),
+    item('mine', '👤', S.person ? `${S.person.name.split(' ')[0]}’s` : 'Mine', open.filter(t => S.person ? taskPeople(t).includes(S.person.id) : !!t.assignee_id).length),
     item('backlog', '🗂️', 'Backlog', open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).length),
     item('done', '✅', 'Done', null));
   const grp = (kind, label) => { const as = S.all('areas').filter(a => a.kind === kind && !a.archived).sort((a, b) => a.sort - b.sort); if (!as.length) return; sideScroll.append(h('div', { class: 'sec-title' }, label, h('button', { class: 'link', onclick: () => openAreaEditor(null, kind) }, '+ Add'))); as.forEach(a => sideScroll.append(item('area:' + a.id, a.emoji || '📁', a.name, open.filter(t => t.area_id === a.id).length))); };
@@ -280,7 +280,7 @@ renderers.tasks = function renderTasks(params) {
   if (TS.list === 'today') { title = 'Today'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= today) || D.dateOf(t.scheduled_start, S.tz) === today)); }
   else if (TS.list === 'week') { title = 'This week'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= D.addDays(today, 7)) || (t.scheduled_start && D.dateOf(t.scheduled_start, S.tz) <= D.addDays(today, 7)))); }
   else if (TS.list === 'all') { title = 'All open'; list = sortDue(open); }
-  else if (TS.list === 'mine') { title = 'Mine'; list = sortDue(open.filter(t => t.assignee_id === S.person?.id)); }
+  else if (TS.list === 'mine') { title = S.person ? `${S.person.name.split(' ')[0]}’s tasks` : 'Assigned'; list = sortDue(open.filter(t => S.person ? taskPeople(t).includes(S.person.id) : !!t.assignee_id)); }
   else if (TS.list === 'backlog') { title = 'Backlog'; list = open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).sort((a, b) => P.IMPORTANCE_W[b.importance] - P.IMPORTANCE_W[a.importance]); }
   else if (TS.list === 'done') { title = 'Done'; list = S.all('tasks').filter(t => t.status === 'done').sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || '')).slice(0, 200); }
   else if (TS.list.startsWith('area:')) { const a = areaOf(TS.list.slice(5)); title = a ? `${a.emoji || ''} ${a.name}` : 'Area'; list = sortDue(open.filter(t => t.area_id === a?.id)); }
