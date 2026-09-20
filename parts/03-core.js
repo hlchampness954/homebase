@@ -7,6 +7,7 @@
 import * as D from './shared/dates.js';
 import * as R from './shared/recurrence.js';
 import * as P from './shared/planner.js';
+import * as AT from './shared/attachments.js';
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const qs = new URLSearchParams(location.search);
@@ -18,7 +19,10 @@ const CFG = {
   workerUrl: (localStorage.getItem('hb_worker_url') || (window.HB_CONFIG && HB_CONFIG.workerUrl) || '').replace(/\/$/, ''),
 };
 const TABLES = ['people','areas','rooms','projects','project_steps','project_costs','pets','assets','maintenance_rules','maintenance_log',
-  'routines','routine_log','tasks','events','plants','plant_observations','pet_activities','lists','list_items','notes','day_modes','memories','activity_log'];
+  'routines','routine_log','tasks','events','plants','plant_observations','pet_activities','lists','list_items','notes','day_modes','memories','activity_log',
+  'files','file_links','task_assignments','household_devices'];
+const DEVICE_KEY = localStorage.getItem('hb_device_key') || (() => { const k = uuidLite(); localStorage.setItem('hb_device_key', k); return k; })();
+function uuidLite() { return crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16); }); }
 
 // ─── UTILS ─────────────────────────────────────────────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
@@ -51,7 +55,9 @@ function confLabel(c) { return { sure: 'Sure', likely: 'Likely', guess: 'Guess' 
 
 // ─── STORE ─────────────────────────────────────────────────────────────────
 const S = {
-  hh: null, tz: 'America/Chicago', settings: {}, household: null, person: null, user: null, session: null, people: [],
+  hh: null, tz: 'America/Chicago', settings: {}, household: null, person: null, me: null, user: null, session: null, people: [],
+  // person lens (spec §12): S.person = the active person for this device (null = Household); S.me = the person tied to the login
+  scope: localStorage.getItem('hb_scope') || 'mine',                  // mine | household | all
   data: Object.fromEntries(TABLES.map(t => [t, new Map()])),
   weather: {}, listeners: new Set(),
   get(t, id) { return this.data[t].get(id); },
@@ -61,6 +67,23 @@ const S = {
   today() { return D.todayIn(this.tz); },
   now() { return D.nowHM(this.tz); },
 };
+// Who owns / helps with a task (task_assignments first, legacy assignee_id as fallback)
+function taskPeople(t) { const a = S.all('task_assignments').filter(x => x.task_id === t.id).map(x => x.person_id); if (!a.length && t.assignee_id) a.push(t.assignee_id); return a; }
+function isMine(t, person = S.person) { if (!person) return true; const ppl = taskPeople(t); return !ppl.length || ppl.includes(person.id); }   // unassigned = anyone's
+function inScope(t) { if (!S.person || S.scope !== 'mine') return true; return isMine(t); }
+function setActivePerson(id) {
+  S.person = id ? S.people.find(p => p.id === id) || null : null;
+  localStorage.setItem('hb_person', id || 'household');
+  if (!DEMO && S.hh) api.deviceSync().catch(() => {});
+  emit('people');
+}
+function setScope(v) { S.scope = v; localStorage.setItem('hb_scope', v); emit('tasks'); }
+function resolveActivePerson() {
+  const saved = localStorage.getItem('hb_person');
+  if (WALL_START || localStorage.getItem('hb_device_kind') === 'wall') { if (!saved) return null; }
+  if (saved === 'household') return null;
+  return S.people.find(p => p.id === saved) || S.me || S.people.find(p => p.is_user) || null;
+}
 const changed = new Set(); let flushTimer;
 function emit(table) { changed.add(table); clearTimeout(flushTimer); flushTimer = setTimeout(() => { const c = new Set(changed); changed.clear(); for (const l of S.listeners) l(c); }, 30); }
 function onChange(fn) { S.listeners.add(fn); return () => S.listeners.delete(fn); }
@@ -75,7 +98,8 @@ function ctx() {
   });
   return {
     today, now: S.now(), tz: S.tz, settings: S.settings,
-    tasks: S.all('tasks'), events: S.all('events'), routines: S.all('routines'), maintenance: S.all('maintenance_rules'),
+    tasks: S.all('tasks').filter(inScope), events: S.all('events'), routines: S.all('routines'), maintenance: S.all('maintenance_rules'),
+    person: S.person, scope: S.scope,
     projects: S.all('projects'), steps: S.all('project_steps'), dayModes: S.all('day_modes'), memories: S.all('memories'),
     weather: S.weather, plants,
   };
@@ -128,7 +152,40 @@ const supa = {
   async remove(t, id) { const { error } = await sb.from(t).delete().eq('id', id); if (error) throw error; },
   async updateHousehold(patch) { const { error } = await sb.from('households').update(patch).eq('id', S.hh); if (error) throw error; },
   token() { return S.session?.access_token; },
+  // ── attachments (spec §4): private bucket upload + files row; derivative JPEG for analysis/thumbnails
+  async uploadFile(file, { source = 'upload', onState } = {}) {
+    const ok = AT.allowed(file); if (!ok.ok) throw new Error(ok.reason);
+    const id = uuid(); const mime = AT.mimeOf(file); const ext = AT.safeExt(file);
+    const path = AT.storagePath(S.hh, id, ext);
+    onState?.('uploading');
+    const [buf, deriv] = await Promise.all([file.arrayBuffer(), AT.isImage(mime) ? AT.makeDerivative(file) : null]);
+    const sha = await AT.sha256Hex(buf);
+    const up = await sb.storage.from('household-media').upload(path, buf, { contentType: mime, upsert: false, cacheControl: '3600' });
+    if (up.error) throw new Error(up.error.message);
+    const meta = { device_key: DEVICE_KEY };
+    if (deriv) { const dpath = AT.storagePath(S.hh, id + '-a', 'jpg'); const d = await sb.storage.from('household-media').upload(dpath, deriv.blob, { contentType: 'image/jpeg', upsert: false }); if (!d.error) { meta.derivative_path = dpath; meta.derivative_mime = 'image/jpeg'; meta.derivative_size = deriv.blob.size; } }
+    const row = { id, storage_path: path, kind: AT.kindFor(mime, file.name), original_name: file.name || `${source}.${ext}`, mime_type: mime, size_bytes: file.size, sha256: sha, width: deriv?.srcWidth || null, height: deriv?.srcHeight || null, source, processing_status: 'ready', metadata: meta, created_by: S.user?.id || null, taken_at: file.lastModified ? new Date(file.lastModified).toISOString() : null };
+    const { data, error } = await sb.from('files').insert({ household_id: S.hh, ...row }).select().single();
+    if (error) { await sb.storage.from('household-media').remove([path]).catch(() => {}); throw error; }
+    S.put('files', data); emit('files');
+    onState?.('ready');
+    return data;
+  },
+  _urls: new Map(),
+  async signedUrl(path, ttl = 3600) {
+    const c = this._urls.get(path); if (c && c.exp > Date.now() + 60000) return c.url;
+    const { data, error } = await sb.storage.from('household-media').createSignedUrl(path, ttl); if (error) throw error;
+    this._urls.set(path, { url: data.signedUrl, exp: Date.now() + ttl * 1000 }); return data.signedUrl;
+  },
+  async removeFile(f) { await sb.storage.from('household-media').remove([f.storage_path, f.metadata?.derivative_path].filter(Boolean)); const { error } = await sb.from('files').delete().eq('id', f.id); if (error) throw error; },
+  // ── device profile (spec §12.1): which person this device defaults to
+  async deviceSync() {
+    const kind = localStorage.getItem('hb_device_kind') || (WALL_START ? 'wall' : 'personal');
+    const row = { household_id: S.hh, device_key: DEVICE_KEY, label: localStorage.getItem('hb_device_label') || deviceLabel(), kind, default_person_id: S.person?.id || null, user_id: S.user?.id || null, last_seen_at: new Date().toISOString(), meta: { ua: navigator.userAgent.slice(0, 160), platform: navigator.platform || '' } };
+    const { error } = await sb.from('household_devices').upsert(row, { onConflict: 'household_id,device_key' }); if (error) console.warn('device', error.message);
+  },
 };
+function deviceLabel() { const ua = navigator.userAgent; const dev = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows PC' : /Mac/.test(ua) ? 'Mac' : 'Device'; return `${dev}${WALL_START ? ' (wall)' : ''}`; }
 
 // ─── BACKEND: DEMO (no network; realistic seed for previews) ───────────────
 const demo = {
@@ -137,6 +194,10 @@ const demo = {
   subscribe() {},
   async insert() {}, async update() {}, async remove() {}, async updateHousehold(p) { Object.assign(S.household, p); },
   token() { return 'demo'; },
+  async uploadFile(file, { source = 'upload' } = {}) { const mime = AT.mimeOf(file); const row = { id: uuid(), household_id: 'demo', storage_path: 'demo/' + file.name, kind: AT.kindFor(mime, file.name), original_name: file.name, mime_type: mime, size_bytes: file.size, source, processing_status: 'ready', metadata: {}, created_at: new Date().toISOString(), _blob: file }; S.put('files', row); emit('files'); return row; },
+  async signedUrl(path) { const f = S.all('files').find(x => x.storage_path === path); return f?._blob ? URL.createObjectURL(f._blob) : ''; },
+  async removeFile(f) { S.remove('files', f.id); emit('files'); },
+  async deviceSync() {},
 };
 function demoSeed() {
   const T = S.today(), hh = 'demo';
