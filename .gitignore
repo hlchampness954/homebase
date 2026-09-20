@@ -1,4 +1,4 @@
-config.js
+# config.js is committed on purpose: it holds only public values (Supabase URL, publishable key, Worker URL).
 node_modules/
 .wrangler/
 .DS_Store
