@@ -430,6 +430,61 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
 .msg .bub p + p{margin-top:8px}
 .msg .bub ul{padding-left:18px;margin:6px 0}
 .msg .bub strong{font-weight:700}
+.msg .bub ol{padding-left:20px;margin:6px 0}
+.msg .bub li{margin:2px 0}
+.msg .bub h3,.msg .bub h4{margin:10px 0 4px;font-size:14.5px;font-weight:700;letter-spacing:0}
+.msg .bub h3:first-child,.msg .bub h4:first-child{margin-top:0}
+.msg .bub code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:var(--bg4,rgba(127,127,127,.15));padding:1px 5px;border-radius:5px}
+.msg .bub pre{background:var(--bg4,rgba(127,127,127,.15));padding:8px 10px;border-radius:10px;overflow:auto;margin:6px 0}
+.msg .bub pre code{background:none;padding:0}
+.msg .bub a{color:var(--violet);text-decoration:underline;text-underline-offset:2px}
+.msg.user .bub a{color:inherit}
+.msg .bub .tbl{overflow-x:auto;margin:8px -4px}
+.msg .bub table{border-collapse:collapse;font-size:13px;min-width:100%}
+.msg .bub th,.msg .bub td{border:1px solid var(--border2);padding:5px 8px;text-align:left;vertical-align:top}
+.msg .bub th{background:var(--bg2);font-weight:600}
+.msg .bub hr{border:0;border-top:1px solid var(--border2);margin:10px 0}
+.msg .sources{font-size:12px;color:var(--text3);margin:4px 0 0 4px;max-width:88%}
+.msg .sources a{color:var(--text3);text-decoration:none;border-bottom:1px dotted var(--border2)}
+.msg .sources span{margin-right:8px;white-space:nowrap}
+.msg .bub .att-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}
+.att-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:4px 8px 4px 4px;border-radius:10px;background:rgba(0,0,0,.08);font-size:12px;font-weight:600}
+.msg.ai .att-chip{background:var(--bg2)}
+.att-chip img,.att-chip .ico{width:28px;height:28px;border-radius:6px;object-fit:cover;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.att-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.person-pill{gap:5px;padding-left:8px}
+.person-pill .chev{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;margin-left:-2px}
+.popmenu{position:fixed;z-index:120;min-width:200px;background:var(--bg2);border:1px solid var(--border2);border-radius:14px;box-shadow:var(--sh);padding:6px;display:flex;flex-direction:column;gap:2px}
+.popmenu[hidden]{display:none}
+.popmenu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;border-radius:10px;font-size:14.5px;font-weight:500;color:var(--text)}
+.popmenu button:hover,.popmenu button:focus-visible{background:var(--bg3)}
+.popmenu button.on{background:var(--accent-bg,rgba(0,0,0,.06));font-weight:700}
+.popmenu .hint{font-size:11.5px;color:var(--text3);padding:6px 12px 6px}
+.popmenu .sep{height:1px;background:var(--border);margin:4px 8px}
+.popmenu .seg{margin:6px 8px 8px}
+.attach-btn{color:var(--text3)}
+.attach-btn.has{color:var(--violet)}
+#ai .tray{display:flex;gap:8px;padding:8px 12px 0;overflow-x:auto;flex-shrink:0}
+#ai .tray[hidden]{display:none}
+.tray .att{position:relative;width:74px;flex-shrink:0;border:1px solid var(--border2);border-radius:12px;background:var(--bg3);padding:4px;font-size:10.5px;color:var(--text2)}
+.tray .att .th{width:64px;height:54px;border-radius:8px;object-fit:cover;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:22px}
+.tray .att .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
+.tray .att .st{color:var(--text3)}
+.tray .att.err{border-color:var(--coral)}
+.tray .att.err .st{color:var(--coral)}
+.tray .att .x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--text);color:var(--bg2);font-size:12px;line-height:20px;text-align:center;border:2px solid var(--bg2)}
+.tray .att .bar{position:absolute;left:6px;right:6px;bottom:3px;height:3px;border-radius:2px;background:var(--border2);overflow:hidden}
+.tray .att .bar i{display:block;height:100%;width:40%;background:var(--violet);animation:slide 1s linear infinite}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(260%)}}
+#ai .drop-hint{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(109,91,208,.14);border:2px dashed var(--violet);border-radius:0;font-weight:700;color:var(--violet);pointer-events:none;z-index:5}
+#ai .panel.dragover .drop-hint{display:flex}
+.files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;padding:10px 12px 12px}
+.files-grid .f{border-radius:12px;overflow:hidden;background:var(--bg3);border:1px solid var(--border);cursor:pointer;font-size:11px;color:var(--text2)}
+.files-grid .f .th{height:80px;width:100%;object-fit:cover;display:flex;align-items:center;justify-content:center;font-size:26px;background:var(--bg2)}
+.files-grid .f .nm{padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scope-seg{display:flex;gap:4px;background:var(--bg3);border-radius:10px;padding:3px}
+.scope-seg button{padding:5px 10px;border-radius:8px;font-size:12.5px;font-weight:600;color:var(--text2)}
+.scope-seg button.on{background:var(--bg2);color:var(--text);box-shadow:var(--sh2)}
 .tool-line{font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px;padding:2px 4px}
 .tool-line .sp{width:10px;height:10px;border:2px solid var(--border2);border-top-color:var(--violet);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -516,6 +571,8 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
   #rail{display:none}
   #topbar{height:52px;padding:0 14px}
   #topbar h1{font-size:18px}
+  #person-pill #person-lbl{display:none}
+  #person-pill{padding:0 8px}
   .pane-body{padding:14px 14px calc(var(--bottom-nav) + var(--ask-h) + 40px + env(safe-area-inset-bottom))}
   .two-col,.three-col{grid-template-columns:1fr}
   #bottom-nav{display:flex;position:absolute;left:0;right:0;bottom:0;height:calc(var(--bottom-nav) + env(safe-area-inset-bottom));padding:6px 4px env(safe-area-inset-bottom);background:var(--bg2);border-top:1px solid var(--border);justify-content:space-around;z-index:45}
@@ -595,6 +652,7 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
       <h1 id="title">Today</h1>
       <span class="sub" id="subtitle"></span>
       <div class="topbar-actions">
+        <button class="pill person-pill" id="person-pill" title="View as…"><span id="person-emoji">🏠</span><span id="person-lbl">Household</span><svg viewBox="0 0 24 24" class="chev"><path d="M6 9l6 6 6-6"/></svg></button>
         <button class="pill" id="sync-pill" title="Sync status"><span class="dot" id="sync-dot"></span><span id="sync-lbl">Local</span></button>
         <button class="icon-btn" id="wall-btn" title="Wall display"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></button>
         <button class="icon-btn" id="ai-btn" title="Ask HomeBase (/)"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
@@ -613,6 +671,7 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
     <div id="askbar">
       <form class="ask" id="ask-form" autocomplete="off">
         <input id="ask-input" placeholder="Ask HomeBase… “I changed the AC filter”, “what's today?”" aria-label="Ask HomeBase">
+        <button type="button" class="ask-btn attach-btn" id="ask-attach" title="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3"/></svg></button>
         <button type="button" class="ask-btn" id="mic-btn" title="Voice"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
         <button type="submit" class="ask-btn send" id="ask-send" title="Send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
       </form>
@@ -638,12 +697,27 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
       <button class="icon-btn" id="ai-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div id="ai-msgs" class="scroll"></div>
+    <div id="ai-tray" class="tray" hidden></div>
     <div class="inp">
-      <textarea id="ai-input" rows="1" placeholder="Tell me what happened, or ask anything…"></textarea>
+      <button class="ask-btn attach-btn" id="ai-attach" title="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3"/></svg></button>
+      <textarea id="ai-input" rows="1" placeholder="Tell me what happened, attach a photo, or ask anything…"></textarea>
       <button class="ask-btn send" id="ai-send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </div>
+    <div class="drop-hint" id="ai-drop">Drop to give it to HomeBase</div>
   </div>
 </div>
+
+<!-- attachment pickers (one universal flow: HomeBase decides what the file is) -->
+<input type="file" id="pick-camera" accept="image/*" capture="environment" hidden>
+<input type="file" id="pick-photos" accept="image/*" multiple hidden>
+<input type="file" id="pick-files" accept="image/*,.pdf,.txt,.csv,.md,.json,.doc,.docx,.xls,.xlsx,application/pdf" multiple hidden>
+<div id="attach-menu" class="popmenu" hidden>
+  <button data-pick="camera">📷 Take photo</button>
+  <button data-pick="photos">🖼️ Choose photo</button>
+  <button data-pick="files">📄 Choose file</button>
+  <div class="hint">Or drag &amp; drop, or paste a screenshot. HomeBase works out what it is.</div>
+</div>
+<div id="person-menu" class="popmenu" hidden></div>
 
 <!-- ═══ WALL ═══ -->
 <div id="wall">
@@ -693,6 +767,7 @@ textarea.big-input{font-size:15px;min-height:64px;resize:none}
 import * as D from './shared/dates.js';
 import * as R from './shared/recurrence.js';
 import * as P from './shared/planner.js';
+import * as AT from './shared/attachments.js';
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const qs = new URLSearchParams(location.search);
@@ -704,7 +779,10 @@ const CFG = {
   workerUrl: (localStorage.getItem('hb_worker_url') || (window.HB_CONFIG && HB_CONFIG.workerUrl) || '').replace(/\/$/, ''),
 };
 const TABLES = ['people','areas','rooms','projects','project_steps','project_costs','pets','assets','maintenance_rules','maintenance_log',
-  'routines','routine_log','tasks','events','plants','plant_observations','pet_activities','lists','list_items','notes','day_modes','memories','activity_log'];
+  'routines','routine_log','tasks','events','plants','plant_observations','pet_activities','lists','list_items','notes','day_modes','memories','activity_log',
+  'files','file_links','task_assignments','household_devices'];
+const DEVICE_KEY = localStorage.getItem('hb_device_key') || (() => { const k = uuidLite(); localStorage.setItem('hb_device_key', k); return k; })();
+function uuidLite() { return crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16); }); }
 
 // ─── UTILS ─────────────────────────────────────────────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
@@ -737,7 +815,9 @@ function confLabel(c) { return { sure: 'Sure', likely: 'Likely', guess: 'Guess' 
 
 // ─── STORE ─────────────────────────────────────────────────────────────────
 const S = {
-  hh: null, tz: 'America/Chicago', settings: {}, household: null, person: null, user: null, session: null, people: [],
+  hh: null, tz: 'America/Chicago', settings: {}, household: null, person: null, me: null, user: null, session: null, people: [],
+  // person lens (spec §12): S.person = the active person for this device (null = Household); S.me = the person tied to the login
+  scope: localStorage.getItem('hb_scope') || 'mine',                  // mine | household | all
   data: Object.fromEntries(TABLES.map(t => [t, new Map()])),
   weather: {}, listeners: new Set(),
   get(t, id) { return this.data[t].get(id); },
@@ -747,6 +827,23 @@ const S = {
   today() { return D.todayIn(this.tz); },
   now() { return D.nowHM(this.tz); },
 };
+// Who owns / helps with a task (task_assignments first, legacy assignee_id as fallback)
+function taskPeople(t) { const a = S.all('task_assignments').filter(x => x.task_id === t.id).map(x => x.person_id); if (!a.length && t.assignee_id) a.push(t.assignee_id); return a; }
+function isMine(t, person = S.person) { if (!person) return true; const ppl = taskPeople(t); return !ppl.length || ppl.includes(person.id); }   // unassigned = anyone's
+function inScope(t) { if (!S.person || S.scope !== 'mine') return true; return isMine(t); }
+function setActivePerson(id) {
+  S.person = id ? S.people.find(p => p.id === id) || null : null;
+  localStorage.setItem('hb_person', id || 'household');
+  if (!DEMO && S.hh) api.deviceSync().catch(() => {});
+  emit('people');
+}
+function setScope(v) { S.scope = v; localStorage.setItem('hb_scope', v); emit('tasks'); }
+function resolveActivePerson() {
+  const saved = localStorage.getItem('hb_person');
+  if (WALL_START || localStorage.getItem('hb_device_kind') === 'wall') { if (!saved) return null; }
+  if (saved === 'household') return null;
+  return S.people.find(p => p.id === saved) || S.me || S.people.find(p => p.is_user) || null;
+}
 const changed = new Set(); let flushTimer;
 function emit(table) { changed.add(table); clearTimeout(flushTimer); flushTimer = setTimeout(() => { const c = new Set(changed); changed.clear(); for (const l of S.listeners) l(c); }, 30); }
 function onChange(fn) { S.listeners.add(fn); return () => S.listeners.delete(fn); }
@@ -761,7 +858,8 @@ function ctx() {
   });
   return {
     today, now: S.now(), tz: S.tz, settings: S.settings,
-    tasks: S.all('tasks'), events: S.all('events'), routines: S.all('routines'), maintenance: S.all('maintenance_rules'),
+    tasks: S.all('tasks').filter(inScope), events: S.all('events'), routines: S.all('routines'), maintenance: S.all('maintenance_rules'),
+    person: S.person, scope: S.scope,
     projects: S.all('projects'), steps: S.all('project_steps'), dayModes: S.all('day_modes'), memories: S.all('memories'),
     weather: S.weather, plants,
   };
@@ -814,7 +912,40 @@ const supa = {
   async remove(t, id) { const { error } = await sb.from(t).delete().eq('id', id); if (error) throw error; },
   async updateHousehold(patch) { const { error } = await sb.from('households').update(patch).eq('id', S.hh); if (error) throw error; },
   token() { return S.session?.access_token; },
+  // ── attachments (spec §4): private bucket upload + files row; derivative JPEG for analysis/thumbnails
+  async uploadFile(file, { source = 'upload', onState } = {}) {
+    const ok = AT.allowed(file); if (!ok.ok) throw new Error(ok.reason);
+    const id = uuid(); const mime = AT.mimeOf(file); const ext = AT.safeExt(file);
+    const path = AT.storagePath(S.hh, id, ext);
+    onState?.('uploading');
+    const [buf, deriv] = await Promise.all([file.arrayBuffer(), AT.isImage(mime) ? AT.makeDerivative(file) : null]);
+    const sha = await AT.sha256Hex(buf);
+    const up = await sb.storage.from('household-media').upload(path, buf, { contentType: mime, upsert: false, cacheControl: '3600' });
+    if (up.error) throw new Error(up.error.message);
+    const meta = { device_key: DEVICE_KEY };
+    if (deriv) { const dpath = AT.storagePath(S.hh, id + '-a', 'jpg'); const d = await sb.storage.from('household-media').upload(dpath, deriv.blob, { contentType: 'image/jpeg', upsert: false }); if (!d.error) { meta.derivative_path = dpath; meta.derivative_mime = 'image/jpeg'; meta.derivative_size = deriv.blob.size; } }
+    const row = { id, storage_path: path, kind: AT.kindFor(mime, file.name), original_name: file.name || `${source}.${ext}`, mime_type: mime, size_bytes: file.size, sha256: sha, width: deriv?.srcWidth || null, height: deriv?.srcHeight || null, source, processing_status: 'ready', metadata: meta, created_by: S.user?.id || null, taken_at: file.lastModified ? new Date(file.lastModified).toISOString() : null };
+    const { data, error } = await sb.from('files').insert({ household_id: S.hh, ...row }).select().single();
+    if (error) { await sb.storage.from('household-media').remove([path]).catch(() => {}); throw error; }
+    S.put('files', data); emit('files');
+    onState?.('ready');
+    return data;
+  },
+  _urls: new Map(),
+  async signedUrl(path, ttl = 3600) {
+    const c = this._urls.get(path); if (c && c.exp > Date.now() + 60000) return c.url;
+    const { data, error } = await sb.storage.from('household-media').createSignedUrl(path, ttl); if (error) throw error;
+    this._urls.set(path, { url: data.signedUrl, exp: Date.now() + ttl * 1000 }); return data.signedUrl;
+  },
+  async removeFile(f) { await sb.storage.from('household-media').remove([f.storage_path, f.metadata?.derivative_path].filter(Boolean)); const { error } = await sb.from('files').delete().eq('id', f.id); if (error) throw error; },
+  // ── device profile (spec §12.1): which person this device defaults to
+  async deviceSync() {
+    const kind = localStorage.getItem('hb_device_kind') || (WALL_START ? 'wall' : 'personal');
+    const row = { household_id: S.hh, device_key: DEVICE_KEY, label: localStorage.getItem('hb_device_label') || deviceLabel(), kind, default_person_id: S.person?.id || null, user_id: S.user?.id || null, last_seen_at: new Date().toISOString(), meta: { ua: navigator.userAgent.slice(0, 160), platform: navigator.platform || '' } };
+    const { error } = await sb.from('household_devices').upsert(row, { onConflict: 'household_id,device_key' }); if (error) console.warn('device', error.message);
+  },
 };
+function deviceLabel() { const ua = navigator.userAgent; const dev = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows PC' : /Mac/.test(ua) ? 'Mac' : 'Device'; return `${dev}${WALL_START ? ' (wall)' : ''}`; }
 
 // ─── BACKEND: DEMO (no network; realistic seed for previews) ───────────────
 const demo = {
@@ -823,6 +954,10 @@ const demo = {
   subscribe() {},
   async insert() {}, async update() {}, async remove() {}, async updateHousehold(p) { Object.assign(S.household, p); },
   token() { return 'demo'; },
+  async uploadFile(file, { source = 'upload' } = {}) { const mime = AT.mimeOf(file); const row = { id: uuid(), household_id: 'demo', storage_path: 'demo/' + file.name, kind: AT.kindFor(mime, file.name), original_name: file.name, mime_type: mime, size_bytes: file.size, source, processing_status: 'ready', metadata: {}, created_at: new Date().toISOString(), _blob: file }; S.put('files', row); emit('files'); return row; },
+  async signedUrl(path) { const f = S.all('files').find(x => x.storage_path === path); return f?._blob ? URL.createObjectURL(f._blob) : ''; },
+  async removeFile(f) { S.remove('files', f.id); emit('files'); },
+  async deviceSync() {},
 };
 function demoSeed() {
   const T = S.today(), hh = 'demo';
@@ -1082,7 +1217,7 @@ function contextLine(t) {
   const sd = D.dateOf(t.scheduled_start, S.tz); if (sd && sd !== t.due_date) parts.push(`${esc(D.humanDate(sd, today))} ${esc(D.fmtHM(D.timeOf(t.scheduled_start, S.tz)))}`);
   if (t.project_id) parts.push(esc(projOf(t.project_id)?.name || '')); else if (t.area_id) parts.push(esc(areaOf(t.area_id)?.name || ''));
   if (t.recurrence) parts.push('↻ ' + esc(R.describeRule(t.recurrence)));
-  if (t.assignee_id && t.assignee_id !== S.person?.id) parts.push(esc(personOf(t.assignee_id)?.name || ''));
+  { const ppl = taskPeople(t).filter(id => id !== S.person?.id).map(id => personOf(id)?.name).filter(Boolean); if (ppl.length) parts.push(esc(ppl.join(' + '))); }
   if (t.duration_min) parts.push(mins(t.duration_min));
   return parts.join(' · ');
 }
@@ -1338,7 +1473,7 @@ renderers.tasks = function renderTasks(params) {
     item('today', '☀️', 'Today', open.filter(t => t.due_date && t.due_date <= today).length),
     item('week', '📆', 'This week', open.filter(t => t.due_date && t.due_date <= D.addDays(today, 7)).length),
     item('all', '📋', 'All open', open.length),
-    item('mine', '👤', 'Mine', open.filter(t => t.assignee_id === S.person?.id).length),
+    item('mine', '👤', S.person ? `${S.person.name.split(' ')[0]}’s` : 'Mine', open.filter(t => S.person ? taskPeople(t).includes(S.person.id) : !!t.assignee_id).length),
     item('backlog', '🗂️', 'Backlog', open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).length),
     item('done', '✅', 'Done', null));
   const grp = (kind, label) => { const as = S.all('areas').filter(a => a.kind === kind && !a.archived).sort((a, b) => a.sort - b.sort); if (!as.length) return; sideScroll.append(h('div', { class: 'sec-title' }, label, h('button', { class: 'link', onclick: () => openAreaEditor(null, kind) }, '+ Add'))); as.forEach(a => sideScroll.append(item('area:' + a.id, a.emoji || '📁', a.name, open.filter(t => t.area_id === a.id).length))); };
@@ -1353,7 +1488,7 @@ renderers.tasks = function renderTasks(params) {
   if (TS.list === 'today') { title = 'Today'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= today) || D.dateOf(t.scheduled_start, S.tz) === today)); }
   else if (TS.list === 'week') { title = 'This week'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= D.addDays(today, 7)) || (t.scheduled_start && D.dateOf(t.scheduled_start, S.tz) <= D.addDays(today, 7)))); }
   else if (TS.list === 'all') { title = 'All open'; list = sortDue(open); }
-  else if (TS.list === 'mine') { title = 'Mine'; list = sortDue(open.filter(t => t.assignee_id === S.person?.id)); }
+  else if (TS.list === 'mine') { title = S.person ? `${S.person.name.split(' ')[0]}’s tasks` : 'Assigned'; list = sortDue(open.filter(t => S.person ? taskPeople(t).includes(S.person.id) : !!t.assignee_id)); }
   else if (TS.list === 'backlog') { title = 'Backlog'; list = open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).sort((a, b) => P.IMPORTANCE_W[b.importance] - P.IMPORTANCE_W[a.importance]); }
   else if (TS.list === 'done') { title = 'Done'; list = S.all('tasks').filter(t => t.status === 'done').sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || '')).slice(0, 200); }
   else if (TS.list.startsWith('area:')) { const a = areaOf(TS.list.slice(5)); title = a ? `${a.emoji || ''} ${a.name}` : 'Area'; list = sortDue(open.filter(t => t.area_id === a?.id)); }
@@ -1615,6 +1750,14 @@ renderers.home = function renderHome() {
     const inp = h('input', { class: 'chip', style: 'width:100%;margin:6px 0 4px;font-weight:500', placeholder: 'Add item…', onkeydown: async e => { if (e.key === 'Enter' && e.target.value.trim()) { await dbInsert('list_items', { list_id: l.id, text: e.target.value.trim(), sort: items.length }, { silent: true }); e.target.value = ''; } } });
     lb.append(h('div', { style: 'padding:0 6px' }, inp)); lc.append(lb); grid.append(lc);
   });
+  // Recent files & photos (household-wide; the AI files them, this is the browse view)
+  const recent = S.all('files').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 12);
+  if (recent.length) {
+    const fcard = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '📎 Recent files'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => { openAI(); $('#pick-files').click(); } }, '+ Add')));
+    const fg = h('div', { class: 'files-grid' });
+    recent.forEach(f => { const links = S.all('file_links').filter(l => l.file_id === f.id && l.entity_type !== 'ai_thread'); const el = h('div', { class: 'f', onclick: () => openFile(f), title: [f.ai_summary || f.caption || f.original_name, links.length ? `→ ${links.map(l => l.entity_type).join(', ')}` : 'not linked yet'].join('\n') }); const th = h('div', { class: 'th' }, fileIcon(f.mime_type)); el.append(th, h('div', { class: 'nm' }, f.caption || f.original_name || f.kind)); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { class: 'th', src: u, alt: '' })); }).catch(() => {}); fg.append(el); });
+    fcard.append(fg); grid.append(fcard);
+  }
   body.append(grid); body.scrollTop = sc;
 };
 function stat(v, l) { return h('div', {}, h('div', { class: 'display', style: 'font-size:22px' }, v), h('div', { class: 'faint', style: 'font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em' }, l)); }
@@ -1754,6 +1897,8 @@ renderers.projects = function renderProjects(params) {
     const cc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Costs'), h('div', { style: 'display:flex;gap:8px;align-items:center' }, p.budget ? h('span', { class: 'tag ' + (ta > p.budget ? 'coral' : 'sage') }, `${money(ta)} of ${money(p.budget)}`) : null, h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openCostEditor(null, p) }, '+ Item'))));
     if (costs.length) { const tb = h('table', { class: 'costs' }, h('thead', {}, h('tr', {}, h('th', {}, 'Item'), h('th', {}, 'Qty'), h('th', { class: 'num' }, 'Planned'), h('th', { class: 'num' }, 'Actual'))), h('tbody', {}, ...costs.map(c => h('tr', { style: 'cursor:pointer', onclick: () => openCostEditor(c, p) }, h('td', {}, c.item), h('td', { class: 'faint' }, c.qty || ''), h('td', { class: 'num' }, money(c.projected)), h('td', { class: 'num', style: c.actual != null ? 'color:var(--sage)' : '' }, money(c.actual))))), h('tfoot', {}, h('tr', {}, h('td', { colspan: 2 }, 'Total'), h('td', { class: 'num' }, money(tp)), h('td', { class: 'num' }, money(ta))))); cc.append(h('div', { style: 'padding:0 8px 8px;overflow-x:auto' }, tb)); } else cc.append(h('div', { class: 'empty' }, 'Materials and purchases go here.'));
     sc2.append(cc);
+    // files & photos linked by the AI (receipts, progress photos)
+    const fc = filesCard('project', p.id, { extra: { name: p.name } }); if (fc) sc2.append(fc);
     // linked tasks & notes
     const linked = S.all('tasks').filter(t => t.project_id === p.id && t.status === 'open'); const pnotes = S.all('notes').filter(n => n.project_id === p.id);
     if (linked.length || pnotes.length) { const lc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Linked'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openTaskEditor(null, { project_id: p.id, area_id: p.area_id }) }, '+ Task'))); const lb = h('div', { class: 'card-bd' }); linked.forEach(t => lb.append(taskRow(t))); pnotes.forEach(n => lb.append(h('div', { class: 'row', onclick: () => openNoteEditor(n) }, h('div', { class: 'ico' }, '📝'), h('div', { class: 'body' }, h('div', { class: 'title' }, n.title), h('div', { class: 'ctx' }, n.body || '')), svgChev()))); lc.append(lb); sc2.append(lc); }
@@ -2003,6 +2148,15 @@ function renderAppSettings() {
   ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall display PIN'), h('div', { style: 'display:flex;gap:8px' }, h('input', { type: 'password', inputmode: 'numeric', maxlength: 4, placeholder: '4 digits', id: 'pin-new', style: 'width:130px' }), h('button', { class: 'btn btn-ghost', onclick: async () => { const v = $('#pin-new').value; if (!/^\d{4}$/.test(v)) return toast('4 digits'); localStorage.setItem('hb_wall_pin', await sha(v)); $('#pin-new').value = ''; toast('PIN set'); } }, 'Set')), h('div', { class: 'help' }, 'A display lock for the mounted iPad. It is not a security boundary — the real login is your account.')));
   ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall auto-dim'), h('div', { class: 'muted', style: 'font-size:14px' }, 'Dims 11 pm – 6 am. Open the wall view with the screen icon or add ', h('code', { class: 'kbd' }, '?wall=1'), ' to the URL on the mounted iPad.')));
   ac.append(ab); grid.append(ac);
+  const pc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'This device')));
+  const pb = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  const kind = localStorage.getItem('hb_device_kind') || (WALL_START ? 'wall' : 'personal');
+  const kseg = h('div', { class: 'seg' }); [['personal', 'Personal'], ['shared', 'Shared'], ['wall', 'Wall iPad']].forEach(([v, l]) => kseg.append(h('button', { class: kind === v ? 'active' : '', onclick: () => { localStorage.setItem('hb_device_kind', v); if (v !== 'personal') setActivePerson(null); api.deviceSync?.().catch(() => {}); renderers.settings(); } }, l)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Device type'), kseg, h('div', { class: 'help' }, 'Personal devices default to one person; shared and wall devices open in Household view.')));
+  const pseg = h('div', { class: 'seg' }); [...S.people.map(p => [p.id, `${personEmoji(p)} ${p.name}`]), [null, '🏠 Household']].forEach(([v, l]) => pseg.append(h('button', { class: (S.person?.id || null) === v ? 'active' : '', onclick: () => { setActivePerson(v); renderers.settings(); } }, l)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Default person on this device'), pseg, h('div', { class: 'help' }, `Currently viewing as ${S.person ? S.person.name : 'Household'}. Everyone shares one login; this only changes whose work shows first and who “me” means to the AI.`)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Device name'), h('input', { value: localStorage.getItem('hb_device_label') || deviceLabel(), onchange: e => { localStorage.setItem('hb_device_label', e.target.value.trim()); api.deviceSync?.().catch(() => {}); toast('Saved'); } })));
+  pc.append(pb); grid.append(pc);
   const dc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Account')));
   const db = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
   db.append(h('p', { class: 'muted', style: 'font-size:14px' }, DEMO ? 'Demo mode — nothing is saved.' : `Signed in as ${S.user?.email || ''}`));
@@ -2036,11 +2190,69 @@ function aiWelcome() {
   box.append(chips);
 }
 function aiBubble(text, cls = 'ai') { const m = h('div', { class: 'msg ' + cls }); m.append(h('div', { class: 'bub', html: cls === 'ai' ? md(text) : esc(text) })); return m; }
-function md(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^(?:- |• )(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m.replace(/\n/g, '') + '</ul>').replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>').replace(/^/, '<p>').replace(/$/, '</p>'); }
+// Small markdown renderer for AI replies: headings, bullet/numbered lists, tables, code, links, bold/italic.
+function mdInline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])_(?!_)([^_\n]+?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])\*(?!\*)([^*\n]+?)\*(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+function md(t) {
+  const lines = String(t || '').replace(/\r/g, '').split('\n');
+  const out = []; let i = 0;
+  const isTableRow = l => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = l => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  while (i < lines.length) {
+    let l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`); continue; }
+    const hm = /^(#{1,6})\s+(.*)$/.exec(l);
+    if (hm) { out.push(`<${hm[1].length <= 2 ? 'h3' : 'h4'}>${mdInline(hm[2])}</${hm[1].length <= 2 ? 'h3' : 'h4'}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
+    if (isTableRow(l) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) rows.push(cells(lines[i++]));
+      out.push(`<div class="tbl"><table><thead><tr>${head.map(c => `<th>${mdInline(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(l)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(l); const items = [];
+      const re = ordered ? /^\s*\d+[.)]\s+(.*)$/ : /^\s*[-*•]\s+(.*)$/;
+      while (i < lines.length) {
+        const m = re.exec(lines[i]);
+        if (m) { items.push(mdInline(m[1])); i++; }
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) { items[items.length - 1] += '<br>' + mdInline(lines[i].trim()); i++; }   // continuation line
+        else break;
+      }
+      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(x => `<li>${x}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+      continue;
+    }
+    const para = [l]; i++;
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\s*(?:[-*•]|\d+[.)])\s+|\s*\|)/.test(lines[i])) para.push(lines[i++]);
+    out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+  }
+  return out.join('') || '<p></p>';
+}
+function sourcesBlock(list) {
+  const s = h('div', { class: 'sources' }, h('span', { class: 'faint' }, 'Sources: '));
+  (list || []).slice(0, 8).forEach((x, k) => { let host = x.title || x.url; try { host = x.title && x.title.length < 60 ? x.title : new URL(x.url).hostname.replace(/^www\./, ''); } catch {} s.append(h('span', {}, h('a', { href: x.url, target: '_blank', rel: 'noopener' }, `${k + 1}. ${host}`))); });
+  return s;
+}
 async function sendAI(text, { fromWall } = {}) {
-  text = (text || '').trim(); if (!text || AI.busy) return;
+  text = (text || '').trim();
+  const atts = AI.pending.filter(a => a.status === 'ready' && a.row);
+  if (AI.pending.some(a => a.status === 'uploading' || a.status === 'queued')) return toast('Still uploading — one second');
+  if ((!text && !atts.length) || AI.busy) return;
   if (!fromWall) openAI();
-  const box = $('#ai-msgs'); box.append(aiBubble(text, 'user')); AI.msgs.push({ role: 'user', text });
+  const box = $('#ai-msgs');
+  const ub = aiBubble(text || (atts.length ? '(attachment)' : ''), 'user'); if (atts.length) ub.querySelector('.bub').prepend(attChips(atts.map(a => a.row))); box.append(ub); AI.msgs.push({ role: 'user', text });
+  const attachment_ids = atts.map(a => a.row.id);
+  AI.pending.forEach(a => { if (a.thumb) URL.revokeObjectURL(a.thumb); }); AI.pending = []; renderTray();
+  if (!text) text = attachment_ids.length ? '(I attached this — work out what it is and file it where it belongs; ask me one question if it is unclear.)' : '';
   const reply = h('div', { class: 'msg ai' }); const bub = h('div', { class: 'bub cursor', html: '' }); reply.append(bub); box.append(reply); box.scrollTop = box.scrollHeight;
   const wallReply = fromWall ? $('#wall-reply') : null; if (wallReply) { wallReply.textContent = '…'; wallReply.classList.add('show'); }
   AI.busy = true; $('#ai-send').disabled = true; $('#ask-send').disabled = true;
@@ -2048,7 +2260,7 @@ async function sendAI(text, { fromWall } = {}) {
   const finish = () => { AI.busy = false; $('#ai-send').disabled = false; $('#ask-send').disabled = false; bub.classList.remove('cursor'); box.scrollTop = box.scrollHeight; };
   if (!CFG.workerUrl) { bub.innerHTML = md(DEMO ? demoReply(text) : 'Set the **AI Worker URL** in Settings → App & connections to turn me on.'); if (wallReply) wallReply.textContent = bub.textContent; finish(); return; }
   try {
-    const res = await fetch(CFG.workerUrl + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ thread_id: AI.thread, message: text, context: { view, date: S.today(), now: S.now(), device: fromWall ? 'wall' : isPhone() ? 'phone' : 'desktop' } }) });
+    const res = await fetch(CFG.workerUrl + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ thread_id: AI.thread, message: text, attachment_ids, active_person_id: S.person?.id || null, context: { view, date: S.today(), now: S.now(), device: fromWall ? 'wall' : isPhone() ? 'phone' : 'desktop', scope: S.scope, device_key: DEVICE_KEY } }) });
     if (!res.ok || !res.body) throw new Error(`Worker ${res.status}`);
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     const toolLines = new Map();
@@ -2066,6 +2278,7 @@ async function sendAI(text, { fromWall } = {}) {
         else if (ev === 'action') { reply.before(actionCard(j)); }
         else if (ev === 'proposal') { reply.before(proposalCard(j)); }
         else if (ev === 'error') { full += `\n\n⚠️ ${j.message}`; bub.innerHTML = md(full); }
+        else if (ev === 'sources') { if (j.sources?.length) reply.append(sourcesBlock(j.sources)); }
         else if (ev === 'done') { /* usage */ }
         box.scrollTop = box.scrollHeight;
       }
@@ -2162,15 +2375,114 @@ document.addEventListener('keydown', e => { if ($('#pin').classList.contains('op
 let lockTimer; function armWallLock() { clearInterval(lockTimer); }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PERSON LENS (spec §12) — "View as" pill, scope, device default
+// ═══════════════════════════════════════════════════════════════════════════
+function personEmoji(p) { return p ? (p.emoji || (p.kind === 'child' ? '🧒' : '🙂')) : '🏠'; }
+function renderPersonPill() {
+  const e = $('#person-emoji'), l = $('#person-lbl'); if (!e) return;
+  e.textContent = personEmoji(S.person); l.textContent = S.person ? S.person.name.split(' ')[0] : 'Household';
+  $('#person-pill').title = S.person ? `Viewing as ${S.person.name} · tap to switch` : 'Viewing the whole household · tap to switch';
+}
+function openPersonMenu(anchor) {
+  const m = $('#person-menu'); m.innerHTML = '';
+  m.append(h('div', { class: 'hint' }, 'View as'));
+  S.people.forEach(p => m.append(h('button', { class: S.person?.id === p.id ? 'on' : '', onclick: () => { setActivePerson(p.id); closeMenus(); renderers[view]?.(); toast(`Viewing as ${p.name}`); } }, h('span', {}, personEmoji(p)), h('span', { style: 'flex:1' }, p.name), p.id === S.me?.id ? h('span', { class: 'faint', style: 'font-size:11px' }, 'you') : null)));
+  m.append(h('button', { class: !S.person ? 'on' : '', onclick: () => { setActivePerson(null); closeMenus(); renderers[view]?.(); toast('Viewing the whole household'); } }, h('span', {}, '🏠'), h('span', { style: 'flex:1' }, 'Household')));
+  m.append(h('div', { class: 'sep' }), h('div', { class: 'hint' }, 'Task scope'));
+  const seg = h('div', { class: 'scope-seg seg' });
+  [['mine', 'Mine'], ['household', 'Household'], ['all', 'All']].forEach(([v, lab]) => seg.append(h('button', { class: S.scope === v ? 'on' : '', onclick: () => { setScope(v); openPersonMenu(anchor); renderers[view]?.(); } }, lab)));
+  m.append(seg);
+  m.append(h('div', { class: 'sep' }), h('button', { onclick: () => { closeMenus(); nav('settings'); } }, h('span', {}, '⚙️'), h('span', {}, 'This device…')));
+  placeMenu(m, anchor);
+}
+function placeMenu(m, anchor) {
+  m.hidden = false; const r = anchor.getBoundingClientRect();
+  m.style.top = Math.min(window.innerHeight - m.offsetHeight - 12, r.bottom + 6) + 'px';
+  m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', closeMenusOnOutside, { once: true }), 0);
+}
+function closeMenus() { $$('.popmenu').forEach(x => { x.hidden = true; }); }
+function closeMenusOnOutside(e) { if (!e.target.closest('.popmenu')) closeMenus(); else document.addEventListener('pointerdown', closeMenusOnOutside, { once: true }); }
+$('#person-pill').onclick = e => { e.stopPropagation(); const m = $('#person-menu'); if (!m.hidden) return closeMenus(); openPersonMenu(e.currentTarget); };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ATTACHMENTS (spec §1, §4) — one universal flow: give it to HomeBase
+// ═══════════════════════════════════════════════════════════════════════════
+AI.pending = [];            // [{ key, file, name, mime, status: queued|uploading|ready|error, row, thumb, err }]
+function initAttachments() {
+  const open = e => { e.stopPropagation(); e.preventDefault(); const m = $('#attach-menu'); if (!m.hidden) return closeMenus(); placeMenu(m, e.currentTarget); };
+  $('#ask-attach').onclick = open; $('#ai-attach').onclick = open;
+  $$('#attach-menu button[data-pick]').forEach(b => { b.onclick = () => { closeMenus(); $('#pick-' + b.dataset.pick).click(); }; });
+  ['camera', 'photos', 'files'].forEach(k => { const inp = $('#pick-' + k); inp.onchange = () => { addAttachments([...inp.files], k === 'camera' ? 'camera' : 'upload'); inp.value = ''; }; });
+  // drag & drop anywhere on the app or the AI panel
+  const panel = $('#ai .panel'); let dragDepth = 0;
+  document.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); panel.classList.add('dragover'); } });
+  document.addEventListener('dragenter', e => { dragDepth++; });
+  document.addEventListener('dragleave', e => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) panel.classList.remove('dragover'); });
+  document.addEventListener('drop', e => { dragDepth = 0; panel.classList.remove('dragover'); const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; e.preventDefault(); openAI(); addAttachments(files, 'drop'); });
+  // paste a screenshot / image (Windows Ctrl+V, iPad paste)
+  document.addEventListener('paste', e => { const items = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file'); if (!items.length) return; const files = items.map(i => i.getAsFile()).filter(Boolean); if (!files.length) return; e.preventDefault(); openAI(); addAttachments(files.map((f, i) => f.name ? f : new File([f], `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })), 'paste'); });
+}
+async function addAttachments(files, source) {
+  if (!files.length) return;
+  if (!navigator.onLine && !DEMO) return toast('Attachments need a connection — try again when you’re online');
+  const room = Math.max(0, AT.MAX_PER_MESSAGE - AI.pending.length);
+  if (files.length > room) toast(`Up to ${AT.MAX_PER_MESSAGE} files per message`);
+  openAI();
+  for (const file of files.slice(0, room)) {
+    const ok = AT.allowed(file); const a = { key: uuid(), file, name: file.name || 'file', mime: AT.mimeOf(file), status: ok.ok ? 'queued' : 'error', err: ok.ok ? null : ok.reason, row: null, thumb: null };
+    if (AT.isImage(a.mime)) { try { a.thumb = URL.createObjectURL(file); } catch {} }
+    AI.pending.push(a); renderTray();
+    if (a.status === 'queued') uploadPending(a);
+  }
+}
+async function uploadPending(a) {
+  a.status = 'uploading'; renderTray();
+  try { a.row = await api.uploadFile(a.file, { source: a.source || 'upload' }); a.status = 'ready'; }
+  catch (e) { a.status = 'error'; a.err = e.message || 'Upload failed'; }
+  renderTray();
+}
+function removePending(key) { const i = AI.pending.findIndex(a => a.key === key); if (i < 0) return; const [a] = AI.pending.splice(i, 1); if (a.row && a.status === 'ready') api.removeFile(a.row).catch(() => {}); if (a.thumb) URL.revokeObjectURL(a.thumb); renderTray(); }
+function renderTray() {
+  const tray = $('#ai-tray'); tray.innerHTML = ''; tray.hidden = !AI.pending.length;
+  $('#ai-attach').classList.toggle('has', !!AI.pending.length); $('#ask-attach').classList.toggle('has', !!AI.pending.length);
+  for (const a of AI.pending) {
+    const el = h('div', { class: 'att' + (a.status === 'error' ? ' err' : ''), title: a.name });
+    el.append(a.thumb ? h('img', { class: 'th', src: a.thumb, alt: '' }) : h('div', { class: 'th' }, fileIcon(a.mime)));
+    el.append(h('div', { class: 'nm' }, a.name), h('div', { class: 'st' }, a.status === 'error' ? (a.err || 'Failed') : a.status === 'ready' ? AT.fmtBytes(a.file.size) : a.status === 'uploading' ? 'Uploading…' : 'Queued'));
+    if (a.status === 'uploading') el.append(h('div', { class: 'bar' }, h('i')));
+    if (a.status === 'error') el.onclick = () => { if (a.err && /type|larger|Empty/i.test(a.err)) return; a.status = 'queued'; uploadPending(a); };
+    el.append(h('button', { class: 'x', 'aria-label': 'Remove', onclick: e => { e.stopPropagation(); removePending(a.key); } }, '×'));
+    tray.append(el);
+  }
+}
+function fileIcon(mime = '') { return mime === 'application/pdf' ? '📕' : /image/.test(mime) ? '🖼️' : /csv|excel|sheet/.test(mime) ? '📊' : /word|document/.test(mime) ? '📝' : '📄'; }
+function attChips(rows) {
+  const c = h('div', { class: 'att-chips' });
+  rows.forEach(f => { const chip = h('button', { class: 'att-chip', title: f.original_name || '', onclick: () => openFile(f) }); const th = h('div', { class: 'ico' }, fileIcon(f.mime_type)); chip.append(th, h('span', { class: 'nm' }, f.original_name || f.kind || 'file')); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { src: u, alt: '' })); }).catch(() => {}); c.append(chip); });
+  return c;
+}
+async function openFile(f) { try { const u = await api.signedUrl(f.storage_path, 600); if (u) window.open(u, '_blank', 'noopener'); } catch (e) { toast('Could not open file'); } }
+function filesFor(entity_type, id) { const ids = new Set(S.all('file_links').filter(l => l.entity_type === entity_type && l.entity_id === id).map(l => l.file_id)); return S.all('files').filter(f => ids.has(f.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')); }
+function filesCard(entity_type, id, { title = 'Files & photos', extra } = {}) {
+  const files = filesFor(entity_type, id); if (!files.length && !extra) return null;
+  const card = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, `${title} · ${files.length}`), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => { openAI(); $('#ai-input').value = `Attach this to ${extra?.name || 'this'}: `; $('#pick-files').click(); } }, '+ Add')));
+  const grid = h('div', { class: 'files-grid' });
+  files.slice(0, 24).forEach(f => { const el = h('div', { class: 'f', onclick: () => openFile(f) }); const th = h('div', { class: 'th' }, fileIcon(f.mime_type)); el.append(th, h('div', { class: 'nm', title: f.ai_summary || f.caption || f.original_name }, f.caption || f.original_name || f.kind)); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { class: 'th', src: u, alt: '' })); }).catch(() => {}); grid.append(el); });
+  if (!files.length) grid.append(h('div', { class: 'empty', style: 'grid-column:1/-1' }, 'No files yet — attach a photo or receipt in Ask HomeBase and say what it’s for.'));
+  card.append(grid); return card;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AUTH + BOOT
 // ═══════════════════════════════════════════════════════════════════════════
-const BUILD = '2.0.0-p1';
+const BUILD = '2.1.0-p2';
 function authScreen(html) { $('#auth').classList.remove('hidden'); $('#auth-box').innerHTML = html; }
 function showApp() { $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden'); }
 async function boot() {
   applyTheme();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  if (DEMO) { await api.load(); return start(); }
+  if (DEMO) { await api.load(); S.me = S.person; S.person = resolveActivePerson(); return start(); }
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) return setupScreen();
   try { await api.init(); } catch (e) { return authScreen(`<h1>HomeBase</h1><p class="sub">Couldn’t load Supabase client (${esc(e.message)}). Check your connection.</p>`); }
   sb.auth.onAuthStateChange((ev, session) => { S.session = session; S.user = session?.user || null; if (ev === 'SIGNED_OUT') location.reload(); });
@@ -2188,17 +2500,17 @@ function setupScreen() {
   $('#sgo').onclick = () => { localStorage.setItem('hb_sb_url', $('#su').value.trim()); localStorage.setItem('hb_sb_key', $('#sk').value.trim()); if ($('#sw').value.trim()) localStorage.setItem('hb_worker_url', $('#sw').value.trim()); location.reload(); };
   $('#sdemo').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
 }
-function signInScreen(msg = '') {
+function signInScreen(msg = '', keepEmail = '') {
   authScreen(`<h1>HomeBase</h1><p class="sub">Sign in to your household.</p>${msg ? `<div class="note" style="margin-bottom:12px">${esc(msg)}</div>` : ''}
-    <div class="field"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="field"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(keepEmail || localStorage.getItem('hb_last_email') || '')}"></div>
     <div class="field" id="pwf"><label>Password</label><input id="pw" type="password" autocomplete="current-password"></div>
     <button class="btn btn-primary btn-lg btn-block" id="go">Sign in</button>
     <div class="alt"><button id="magic">Email me a sign-in link instead</button> · <button id="signup">Create account</button></div>
     <div class="alt" style="margin-top:22px"><button id="demo2">Try the demo</button></div>`);
-  $('#go').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('#em').value.trim(), password: $('#pw').value }); if (error) return signInScreen(error.message); await afterSignIn(); };
+  $('#go').onclick = async () => { const email = $('#em').value.trim(); if (!email || !$('#pw').value) return signInScreen('Enter your email and password first.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithPassword({ email, password: $('#pw').value }); if (error) return signInScreen(error.message, email); await afterSignIn(); };
   $('#pw').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
-  $('#magic').onclick = async () => { const { error } = await sb.auth.signInWithOtp({ email: $('#em').value.trim(), options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.'); };
-  $('#signup').onclick = async () => { const { error } = await sb.auth.signUp({ email: $('#em').value.trim(), password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. If email confirmation is on, confirm then sign in.'); };
+  $('#magic').onclick = async () => { const email = $('#em').value.trim(); if (!email) return signInScreen('Enter your email first.'); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.', email); };
+  $('#signup').onclick = async () => { const email = $('#em').value.trim(); if (!email || $('#pw').value.length < 8) return signInScreen('Type your email and a new password (8+ characters) in the boxes above, then tap Create account.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signUp({ email, password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. Check your email for the confirmation link, then sign in here.', email); };
   $('#demo2').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
 }
 async function afterSignIn() {
@@ -2207,8 +2519,10 @@ async function afterSignIn() {
   if (!mem?.length) return householdScreen();
   S.hh = mem[0].household_id; S.household = mem[0].households; S.tz = S.household?.tz || S.tz; S.settings = S.household?.settings || {};
   await api.load();
-  S.person = S.get('people', mem[0].person_id) || S.people.find(p => p.is_user) || null;
+  S.me = S.get('people', mem[0].person_id) || S.people.find(p => p.is_user) || null;
+  S.person = resolveActivePerson();
   api.subscribe();
+  api.deviceSync().catch(() => {});
   start();
 }
 function householdScreen(msg = '') {
@@ -2226,6 +2540,8 @@ function householdScreen(msg = '') {
 function start() {
   showApp();
   loadWeather();
+  renderPersonPill(); onChange(t => { if (t.has('people')) renderPersonPill(); });
+  initAttachments();
   onChange(tables => { if (W.open) renderWall(); if ($('#sheet').classList.contains('open') && !tables.has('list_items') && !tables.has('memories')) return; renderers[view]?.(); if (tables.has('tasks') || tables.has('maintenance_rules')) updateBadges(); });
   updateBadges();
   const initial = WALL_START ? 'today' : (location.hash.slice(1) || 'today');
