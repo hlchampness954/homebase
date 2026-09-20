@@ -2,7 +2,8 @@
 -- Run in Supabase SQL editor (or `supabase db push`). Idempotent.
 -- Archives v17 tables as v17_* (never drops), then creates the v2 life model.
 
-create extension if not exists pgcrypto;
+-- (no pgcrypto dependency: Supabase installs it in the `extensions` schema, which is off the
+--  search_path inside our security-definer RPCs)
 
 -- ───────────────────────────────────────────────────────────
 -- 0. Archive v17 tables (only if they exist and are the old shape)
@@ -29,7 +30,7 @@ begin new.updated_at = now(); return new; end $$;
 
 create or replace function public.gen_invite_code() returns text
 language sql volatile as $$
-  select upper(substr(encode(gen_random_bytes(6),'hex'),1,8));
+  select upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
 $$;
 
 -- ───────────────────────────────────────────────────────────
