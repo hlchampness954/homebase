@@ -1659,10 +1659,10 @@ function message_cleanup(m) { m.content = m.content.filter(Boolean); }
 
 // Server-side tools (executed by Anthropic, never dispatched locally)
 export const WEB_TOOLS = [
-  { type: 'web_search_20250305', name: 'web_search', max_uses: WEB_SEARCH_MAX_USES, user_location: { type: 'approximate', city: 'New Braunfels', region: 'Texas', country: 'US', timezone: DEFAULT_TZ } },
-  { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: WEB_FETCH_MAX_USES, max_content_tokens: 20000 },
+  { type: 'web_search_20260318', name: 'web_search', max_uses: WEB_SEARCH_MAX_USES, user_location: { type: 'approximate', city: 'New Braunfels', region: 'Texas', country: 'US', timezone: DEFAULT_TZ } },
+  { type: 'web_fetch_20260318', name: 'web_fetch', max_uses: WEB_FETCH_MAX_USES, max_content_tokens: 20000, citations: { enabled: true } },
 ];
-const ANTHROPIC_BETAS = 'web-fetch-2025-09-10';
+const ANTHROPIC_BETAS = '';                                   // web search / fetch are GA — no beta header needed
 
 function friendlyAnthropicError(status, body) {
   let msg = ''; let type = '';
@@ -1676,7 +1676,7 @@ function friendlyAnthropicError(status, body) {
 
 async function streamAnthropic(env, payload, onText, onTool = async () => {}) {
   const body = JSON.stringify({ ...payload, stream: true });
-  const headers = { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01', 'anthropic-beta': ANTHROPIC_BETAS, 'content-type': 'application/json', accept: 'text/event-stream' };
+  const headers = { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01', 'content-type': 'application/json', accept: 'text/event-stream', ...(ANTHROPIC_BETAS ? { 'anthropic-beta': ANTHROPIC_BETAS } : {}) };
   let res, lastErr;
   for (let attempt = 0; attempt <= ANTHROPIC_RETRIES; attempt++) {
     if (attempt) await new Promise(r => setTimeout(r, Math.min(8000, 1500 * 2 ** (attempt - 1)) + Math.random() * 500));
