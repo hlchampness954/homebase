@@ -24,6 +24,7 @@
       <h1 id="title">Today</h1>
       <span class="sub" id="subtitle"></span>
       <div class="topbar-actions">
+        <button class="pill person-pill" id="person-pill" title="View as…"><span id="person-emoji">🏠</span><span id="person-lbl">Household</span><svg viewBox="0 0 24 24" class="chev"><path d="M6 9l6 6 6-6"/></svg></button>
         <button class="pill" id="sync-pill" title="Sync status"><span class="dot" id="sync-dot"></span><span id="sync-lbl">Local</span></button>
         <button class="icon-btn" id="wall-btn" title="Wall display"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></button>
         <button class="icon-btn" id="ai-btn" title="Ask HomeBase (/)"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
@@ -42,6 +43,7 @@
     <div id="askbar">
       <form class="ask" id="ask-form" autocomplete="off">
         <input id="ask-input" placeholder="Ask HomeBase… “I changed the AC filter”, “what's today?”" aria-label="Ask HomeBase">
+        <button type="button" class="ask-btn attach-btn" id="ask-attach" title="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3"/></svg></button>
         <button type="button" class="ask-btn" id="mic-btn" title="Voice"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
         <button type="submit" class="ask-btn send" id="ask-send" title="Send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
       </form>
@@ -67,12 +69,27 @@
       <button class="icon-btn" id="ai-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div id="ai-msgs" class="scroll"></div>
+    <div id="ai-tray" class="tray" hidden></div>
     <div class="inp">
-      <textarea id="ai-input" rows="1" placeholder="Tell me what happened, or ask anything…"></textarea>
+      <button class="ask-btn attach-btn" id="ai-attach" title="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3"/></svg></button>
+      <textarea id="ai-input" rows="1" placeholder="Tell me what happened, attach a photo, or ask anything…"></textarea>
       <button class="ask-btn send" id="ai-send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </div>
+    <div class="drop-hint" id="ai-drop">Drop to give it to HomeBase</div>
   </div>
 </div>
+
+<!-- attachment pickers (one universal flow: HomeBase decides what the file is) -->
+<input type="file" id="pick-camera" accept="image/*" capture="environment" hidden>
+<input type="file" id="pick-photos" accept="image/*" multiple hidden>
+<input type="file" id="pick-files" accept="image/*,.pdf,.txt,.csv,.md,.json,.doc,.docx,.xls,.xlsx,application/pdf" multiple hidden>
+<div id="attach-menu" class="popmenu" hidden>
+  <button data-pick="camera">📷 Take photo</button>
+  <button data-pick="photos">🖼️ Choose photo</button>
+  <button data-pick="files">📄 Choose file</button>
+  <div class="hint">Or drag &amp; drop, or paste a screenshot. HomeBase works out what it is.</div>
+</div>
+<div id="person-menu" class="popmenu" hidden></div>
 
 <!-- ═══ WALL ═══ -->
 <div id="wall">
