@@ -1,0 +1,46 @@
+name: Verify HomeBase
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run Worker smoke tests
+        run: node worker/test/smoke.mjs
+
+      - name: Verify generated index.html matches source parts
+        shell: bash
+        run: |
+          cat             parts/01-head.html             parts/02-body.html             parts/03-core.js             parts/04-today-tasks.js             parts/05-home-projects-calendar.js             parts/06-settings-ai-wall-init.js             > /tmp/index.generated.html
+          cmp --silent /tmp/index.generated.html index.html || {
+            echo "index.html is out of sync with parts/*"
+            diff -u index.html /tmp/index.generated.html | head -200
+            exit 1
+          }
+
+      - name: Verify required deployment files
+        shell: bash
+        run: |
+          test -f index.html
+          test -f manifest.webmanifest
+          test -f sw.js
+          test -f .nojekyll
+          test -f supabase/migrations/001_v2_schema.sql
+          test -f supabase/migrations/002_rls.sql
+          test -f supabase/migrations/003_seed_household.sql
+          test -f worker/wrangler.toml
