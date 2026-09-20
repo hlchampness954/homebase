@@ -105,6 +105,15 @@ function renderAppSettings() {
   ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall display PIN'), h('div', { style: 'display:flex;gap:8px' }, h('input', { type: 'password', inputmode: 'numeric', maxlength: 4, placeholder: '4 digits', id: 'pin-new', style: 'width:130px' }), h('button', { class: 'btn btn-ghost', onclick: async () => { const v = $('#pin-new').value; if (!/^\d{4}$/.test(v)) return toast('4 digits'); localStorage.setItem('hb_wall_pin', await sha(v)); $('#pin-new').value = ''; toast('PIN set'); } }, 'Set')), h('div', { class: 'help' }, 'A display lock for the mounted iPad. It is not a security boundary — the real login is your account.')));
   ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall auto-dim'), h('div', { class: 'muted', style: 'font-size:14px' }, 'Dims 11 pm – 6 am. Open the wall view with the screen icon or add ', h('code', { class: 'kbd' }, '?wall=1'), ' to the URL on the mounted iPad.')));
   ac.append(ab); grid.append(ac);
+  const pc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'This device')));
+  const pb = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  const kind = localStorage.getItem('hb_device_kind') || (WALL_START ? 'wall' : 'personal');
+  const kseg = h('div', { class: 'seg' }); [['personal', 'Personal'], ['shared', 'Shared'], ['wall', 'Wall iPad']].forEach(([v, l]) => kseg.append(h('button', { class: kind === v ? 'active' : '', onclick: () => { localStorage.setItem('hb_device_kind', v); if (v !== 'personal') setActivePerson(null); api.deviceSync?.().catch(() => {}); renderers.settings(); } }, l)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Device type'), kseg, h('div', { class: 'help' }, 'Personal devices default to one person; shared and wall devices open in Household view.')));
+  const pseg = h('div', { class: 'seg' }); [...S.people.map(p => [p.id, `${personEmoji(p)} ${p.name}`]), [null, '🏠 Household']].forEach(([v, l]) => pseg.append(h('button', { class: (S.person?.id || null) === v ? 'active' : '', onclick: () => { setActivePerson(v); renderers.settings(); } }, l)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Default person on this device'), pseg, h('div', { class: 'help' }, `Currently viewing as ${S.person ? S.person.name : 'Household'}. Everyone shares one login; this only changes whose work shows first and who “me” means to the AI.`)));
+  pb.append(h('div', { class: 'field' }, h('label', {}, 'Device name'), h('input', { value: localStorage.getItem('hb_device_label') || deviceLabel(), onchange: e => { localStorage.setItem('hb_device_label', e.target.value.trim()); api.deviceSync?.().catch(() => {}); toast('Saved'); } })));
+  pc.append(pb); grid.append(pc);
   const dc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Account')));
   const db = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
   db.append(h('p', { class: 'muted', style: 'font-size:14px' }, DEMO ? 'Demo mode — nothing is saved.' : `Signed in as ${S.user?.email || ''}`));
@@ -138,11 +147,69 @@ function aiWelcome() {
   box.append(chips);
 }
 function aiBubble(text, cls = 'ai') { const m = h('div', { class: 'msg ' + cls }); m.append(h('div', { class: 'bub', html: cls === 'ai' ? md(text) : esc(text) })); return m; }
-function md(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^(?:- |• )(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m.replace(/\n/g, '') + '</ul>').replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>').replace(/^/, '<p>').replace(/$/, '</p>'); }
+// Small markdown renderer for AI replies: headings, bullet/numbered lists, tables, code, links, bold/italic.
+function mdInline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])_(?!_)([^_\n]+?)_(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])\*(?!\*)([^*\n]+?)\*(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+function md(t) {
+  const lines = String(t || '').replace(/\r/g, '').split('\n');
+  const out = []; let i = 0;
+  const isTableRow = l => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = l => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  while (i < lines.length) {
+    let l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`); continue; }
+    const hm = /^(#{1,6})\s+(.*)$/.exec(l);
+    if (hm) { out.push(`<${hm[1].length <= 2 ? 'h3' : 'h4'}>${mdInline(hm[2])}</${hm[1].length <= 2 ? 'h3' : 'h4'}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
+    if (isTableRow(l) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) rows.push(cells(lines[i++]));
+      out.push(`<div class="tbl"><table><thead><tr>${head.map(c => `<th>${mdInline(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(l)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(l); const items = [];
+      const re = ordered ? /^\s*\d+[.)]\s+(.*)$/ : /^\s*[-*•]\s+(.*)$/;
+      while (i < lines.length) {
+        const m = re.exec(lines[i]);
+        if (m) { items.push(mdInline(m[1])); i++; }
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) { items[items.length - 1] += '<br>' + mdInline(lines[i].trim()); i++; }   // continuation line
+        else break;
+      }
+      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(x => `<li>${x}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+      continue;
+    }
+    const para = [l]; i++;
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\s*(?:[-*•]|\d+[.)])\s+|\s*\|)/.test(lines[i])) para.push(lines[i++]);
+    out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+  }
+  return out.join('') || '<p></p>';
+}
+function sourcesBlock(list) {
+  const s = h('div', { class: 'sources' }, h('span', { class: 'faint' }, 'Sources: '));
+  (list || []).slice(0, 8).forEach((x, k) => { let host = x.title || x.url; try { host = x.title && x.title.length < 60 ? x.title : new URL(x.url).hostname.replace(/^www\./, ''); } catch {} s.append(h('span', {}, h('a', { href: x.url, target: '_blank', rel: 'noopener' }, `${k + 1}. ${host}`))); });
+  return s;
+}
 async function sendAI(text, { fromWall } = {}) {
-  text = (text || '').trim(); if (!text || AI.busy) return;
+  text = (text || '').trim();
+  const atts = AI.pending.filter(a => a.status === 'ready' && a.row);
+  if (AI.pending.some(a => a.status === 'uploading' || a.status === 'queued')) return toast('Still uploading — one second');
+  if ((!text && !atts.length) || AI.busy) return;
   if (!fromWall) openAI();
-  const box = $('#ai-msgs'); box.append(aiBubble(text, 'user')); AI.msgs.push({ role: 'user', text });
+  const box = $('#ai-msgs');
+  const ub = aiBubble(text || (atts.length ? '(attachment)' : ''), 'user'); if (atts.length) ub.querySelector('.bub').prepend(attChips(atts.map(a => a.row))); box.append(ub); AI.msgs.push({ role: 'user', text });
+  const attachment_ids = atts.map(a => a.row.id);
+  AI.pending.forEach(a => { if (a.thumb) URL.revokeObjectURL(a.thumb); }); AI.pending = []; renderTray();
+  if (!text) text = attachment_ids.length ? '(I attached this — work out what it is and file it where it belongs; ask me one question if it is unclear.)' : '';
   const reply = h('div', { class: 'msg ai' }); const bub = h('div', { class: 'bub cursor', html: '' }); reply.append(bub); box.append(reply); box.scrollTop = box.scrollHeight;
   const wallReply = fromWall ? $('#wall-reply') : null; if (wallReply) { wallReply.textContent = '…'; wallReply.classList.add('show'); }
   AI.busy = true; $('#ai-send').disabled = true; $('#ask-send').disabled = true;
@@ -150,7 +217,7 @@ async function sendAI(text, { fromWall } = {}) {
   const finish = () => { AI.busy = false; $('#ai-send').disabled = false; $('#ask-send').disabled = false; bub.classList.remove('cursor'); box.scrollTop = box.scrollHeight; };
   if (!CFG.workerUrl) { bub.innerHTML = md(DEMO ? demoReply(text) : 'Set the **AI Worker URL** in Settings → App & connections to turn me on.'); if (wallReply) wallReply.textContent = bub.textContent; finish(); return; }
   try {
-    const res = await fetch(CFG.workerUrl + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ thread_id: AI.thread, message: text, context: { view, date: S.today(), now: S.now(), device: fromWall ? 'wall' : isPhone() ? 'phone' : 'desktop' } }) });
+    const res = await fetch(CFG.workerUrl + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ thread_id: AI.thread, message: text, attachment_ids, active_person_id: S.person?.id || null, context: { view, date: S.today(), now: S.now(), device: fromWall ? 'wall' : isPhone() ? 'phone' : 'desktop', scope: S.scope, device_key: DEVICE_KEY } }) });
     if (!res.ok || !res.body) throw new Error(`Worker ${res.status}`);
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     const toolLines = new Map();
@@ -168,6 +235,7 @@ async function sendAI(text, { fromWall } = {}) {
         else if (ev === 'action') { reply.before(actionCard(j)); }
         else if (ev === 'proposal') { reply.before(proposalCard(j)); }
         else if (ev === 'error') { full += `\n\n⚠️ ${j.message}`; bub.innerHTML = md(full); }
+        else if (ev === 'sources') { if (j.sources?.length) reply.append(sourcesBlock(j.sources)); }
         else if (ev === 'done') { /* usage */ }
         box.scrollTop = box.scrollHeight;
       }
@@ -264,15 +332,114 @@ document.addEventListener('keydown', e => { if ($('#pin').classList.contains('op
 let lockTimer; function armWallLock() { clearInterval(lockTimer); }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PERSON LENS (spec §12) — "View as" pill, scope, device default
+// ═══════════════════════════════════════════════════════════════════════════
+function personEmoji(p) { return p ? (p.emoji || (p.kind === 'child' ? '🧒' : '🙂')) : '🏠'; }
+function renderPersonPill() {
+  const e = $('#person-emoji'), l = $('#person-lbl'); if (!e) return;
+  e.textContent = personEmoji(S.person); l.textContent = S.person ? S.person.name.split(' ')[0] : 'Household';
+  $('#person-pill').title = S.person ? `Viewing as ${S.person.name} · tap to switch` : 'Viewing the whole household · tap to switch';
+}
+function openPersonMenu(anchor) {
+  const m = $('#person-menu'); m.innerHTML = '';
+  m.append(h('div', { class: 'hint' }, 'View as'));
+  S.people.forEach(p => m.append(h('button', { class: S.person?.id === p.id ? 'on' : '', onclick: () => { setActivePerson(p.id); closeMenus(); renderers[view]?.(); toast(`Viewing as ${p.name}`); } }, h('span', {}, personEmoji(p)), h('span', { style: 'flex:1' }, p.name), p.id === S.me?.id ? h('span', { class: 'faint', style: 'font-size:11px' }, 'you') : null)));
+  m.append(h('button', { class: !S.person ? 'on' : '', onclick: () => { setActivePerson(null); closeMenus(); renderers[view]?.(); toast('Viewing the whole household'); } }, h('span', {}, '🏠'), h('span', { style: 'flex:1' }, 'Household')));
+  m.append(h('div', { class: 'sep' }), h('div', { class: 'hint' }, 'Task scope'));
+  const seg = h('div', { class: 'scope-seg seg' });
+  [['mine', 'Mine'], ['household', 'Household'], ['all', 'All']].forEach(([v, lab]) => seg.append(h('button', { class: S.scope === v ? 'on' : '', onclick: () => { setScope(v); openPersonMenu(anchor); renderers[view]?.(); } }, lab)));
+  m.append(seg);
+  m.append(h('div', { class: 'sep' }), h('button', { onclick: () => { closeMenus(); nav('settings'); } }, h('span', {}, '⚙️'), h('span', {}, 'This device…')));
+  placeMenu(m, anchor);
+}
+function placeMenu(m, anchor) {
+  m.hidden = false; const r = anchor.getBoundingClientRect();
+  m.style.top = Math.min(window.innerHeight - m.offsetHeight - 12, r.bottom + 6) + 'px';
+  m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', closeMenusOnOutside, { once: true }), 0);
+}
+function closeMenus() { $$('.popmenu').forEach(x => { x.hidden = true; }); }
+function closeMenusOnOutside(e) { if (!e.target.closest('.popmenu')) closeMenus(); else document.addEventListener('pointerdown', closeMenusOnOutside, { once: true }); }
+$('#person-pill').onclick = e => { e.stopPropagation(); const m = $('#person-menu'); if (!m.hidden) return closeMenus(); openPersonMenu(e.currentTarget); };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ATTACHMENTS (spec §1, §4) — one universal flow: give it to HomeBase
+// ═══════════════════════════════════════════════════════════════════════════
+AI.pending = [];            // [{ key, file, name, mime, status: queued|uploading|ready|error, row, thumb, err }]
+function initAttachments() {
+  const open = e => { e.stopPropagation(); e.preventDefault(); const m = $('#attach-menu'); if (!m.hidden) return closeMenus(); placeMenu(m, e.currentTarget); };
+  $('#ask-attach').onclick = open; $('#ai-attach').onclick = open;
+  $$('#attach-menu button[data-pick]').forEach(b => { b.onclick = () => { closeMenus(); $('#pick-' + b.dataset.pick).click(); }; });
+  ['camera', 'photos', 'files'].forEach(k => { const inp = $('#pick-' + k); inp.onchange = () => { addAttachments([...inp.files], k === 'camera' ? 'camera' : 'upload'); inp.value = ''; }; });
+  // drag & drop anywhere on the app or the AI panel
+  const panel = $('#ai .panel'); let dragDepth = 0;
+  document.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); panel.classList.add('dragover'); } });
+  document.addEventListener('dragenter', e => { dragDepth++; });
+  document.addEventListener('dragleave', e => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) panel.classList.remove('dragover'); });
+  document.addEventListener('drop', e => { dragDepth = 0; panel.classList.remove('dragover'); const files = [...(e.dataTransfer?.files || [])]; if (!files.length) return; e.preventDefault(); openAI(); addAttachments(files, 'drop'); });
+  // paste a screenshot / image (Windows Ctrl+V, iPad paste)
+  document.addEventListener('paste', e => { const items = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file'); if (!items.length) return; const files = items.map(i => i.getAsFile()).filter(Boolean); if (!files.length) return; e.preventDefault(); openAI(); addAttachments(files.map((f, i) => f.name ? f : new File([f], `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })), 'paste'); });
+}
+async function addAttachments(files, source) {
+  if (!files.length) return;
+  if (!navigator.onLine && !DEMO) return toast('Attachments need a connection — try again when you’re online');
+  const room = Math.max(0, AT.MAX_PER_MESSAGE - AI.pending.length);
+  if (files.length > room) toast(`Up to ${AT.MAX_PER_MESSAGE} files per message`);
+  openAI();
+  for (const file of files.slice(0, room)) {
+    const ok = AT.allowed(file); const a = { key: uuid(), file, name: file.name || 'file', mime: AT.mimeOf(file), status: ok.ok ? 'queued' : 'error', err: ok.ok ? null : ok.reason, row: null, thumb: null };
+    if (AT.isImage(a.mime)) { try { a.thumb = URL.createObjectURL(file); } catch {} }
+    AI.pending.push(a); renderTray();
+    if (a.status === 'queued') uploadPending(a);
+  }
+}
+async function uploadPending(a) {
+  a.status = 'uploading'; renderTray();
+  try { a.row = await api.uploadFile(a.file, { source: a.source || 'upload' }); a.status = 'ready'; }
+  catch (e) { a.status = 'error'; a.err = e.message || 'Upload failed'; }
+  renderTray();
+}
+function removePending(key) { const i = AI.pending.findIndex(a => a.key === key); if (i < 0) return; const [a] = AI.pending.splice(i, 1); if (a.row && a.status === 'ready') api.removeFile(a.row).catch(() => {}); if (a.thumb) URL.revokeObjectURL(a.thumb); renderTray(); }
+function renderTray() {
+  const tray = $('#ai-tray'); tray.innerHTML = ''; tray.hidden = !AI.pending.length;
+  $('#ai-attach').classList.toggle('has', !!AI.pending.length); $('#ask-attach').classList.toggle('has', !!AI.pending.length);
+  for (const a of AI.pending) {
+    const el = h('div', { class: 'att' + (a.status === 'error' ? ' err' : ''), title: a.name });
+    el.append(a.thumb ? h('img', { class: 'th', src: a.thumb, alt: '' }) : h('div', { class: 'th' }, fileIcon(a.mime)));
+    el.append(h('div', { class: 'nm' }, a.name), h('div', { class: 'st' }, a.status === 'error' ? (a.err || 'Failed') : a.status === 'ready' ? AT.fmtBytes(a.file.size) : a.status === 'uploading' ? 'Uploading…' : 'Queued'));
+    if (a.status === 'uploading') el.append(h('div', { class: 'bar' }, h('i')));
+    if (a.status === 'error') el.onclick = () => { if (a.err && /type|larger|Empty/i.test(a.err)) return; a.status = 'queued'; uploadPending(a); };
+    el.append(h('button', { class: 'x', 'aria-label': 'Remove', onclick: e => { e.stopPropagation(); removePending(a.key); } }, '×'));
+    tray.append(el);
+  }
+}
+function fileIcon(mime = '') { return mime === 'application/pdf' ? '📕' : /image/.test(mime) ? '🖼️' : /csv|excel|sheet/.test(mime) ? '📊' : /word|document/.test(mime) ? '📝' : '📄'; }
+function attChips(rows) {
+  const c = h('div', { class: 'att-chips' });
+  rows.forEach(f => { const chip = h('button', { class: 'att-chip', title: f.original_name || '', onclick: () => openFile(f) }); const th = h('div', { class: 'ico' }, fileIcon(f.mime_type)); chip.append(th, h('span', { class: 'nm' }, f.original_name || f.kind || 'file')); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { src: u, alt: '' })); }).catch(() => {}); c.append(chip); });
+  return c;
+}
+async function openFile(f) { try { const u = await api.signedUrl(f.storage_path, 600); if (u) window.open(u, '_blank', 'noopener'); } catch (e) { toast('Could not open file'); } }
+function filesFor(entity_type, id) { const ids = new Set(S.all('file_links').filter(l => l.entity_type === entity_type && l.entity_id === id).map(l => l.file_id)); return S.all('files').filter(f => ids.has(f.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')); }
+function filesCard(entity_type, id, { title = 'Files & photos', extra } = {}) {
+  const files = filesFor(entity_type, id); if (!files.length && !extra) return null;
+  const card = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, `${title} · ${files.length}`), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => { openAI(); $('#ai-input').value = `Attach this to ${extra?.name || 'this'}: `; $('#pick-files').click(); } }, '+ Add')));
+  const grid = h('div', { class: 'files-grid' });
+  files.slice(0, 24).forEach(f => { const el = h('div', { class: 'f', onclick: () => openFile(f) }); const th = h('div', { class: 'th' }, fileIcon(f.mime_type)); el.append(th, h('div', { class: 'nm', title: f.ai_summary || f.caption || f.original_name }, f.caption || f.original_name || f.kind)); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { class: 'th', src: u, alt: '' })); }).catch(() => {}); grid.append(el); });
+  if (!files.length) grid.append(h('div', { class: 'empty', style: 'grid-column:1/-1' }, 'No files yet — attach a photo or receipt in Ask HomeBase and say what it’s for.'));
+  card.append(grid); return card;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AUTH + BOOT
 // ═══════════════════════════════════════════════════════════════════════════
-const BUILD = '2.0.0-p1';
+const BUILD = '2.1.0-p2';
 function authScreen(html) { $('#auth').classList.remove('hidden'); $('#auth-box').innerHTML = html; }
 function showApp() { $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden'); }
 async function boot() {
   applyTheme();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  if (DEMO) { await api.load(); return start(); }
+  if (DEMO) { await api.load(); S.me = S.person; S.person = resolveActivePerson(); return start(); }
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) return setupScreen();
   try { await api.init(); } catch (e) { return authScreen(`<h1>HomeBase</h1><p class="sub">Couldn’t load Supabase client (${esc(e.message)}). Check your connection.</p>`); }
   sb.auth.onAuthStateChange((ev, session) => { S.session = session; S.user = session?.user || null; if (ev === 'SIGNED_OUT') location.reload(); });
@@ -290,17 +457,17 @@ function setupScreen() {
   $('#sgo').onclick = () => { localStorage.setItem('hb_sb_url', $('#su').value.trim()); localStorage.setItem('hb_sb_key', $('#sk').value.trim()); if ($('#sw').value.trim()) localStorage.setItem('hb_worker_url', $('#sw').value.trim()); location.reload(); };
   $('#sdemo').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
 }
-function signInScreen(msg = '') {
+function signInScreen(msg = '', keepEmail = '') {
   authScreen(`<h1>HomeBase</h1><p class="sub">Sign in to your household.</p>${msg ? `<div class="note" style="margin-bottom:12px">${esc(msg)}</div>` : ''}
-    <div class="field"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="field"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(keepEmail || localStorage.getItem('hb_last_email') || '')}"></div>
     <div class="field" id="pwf"><label>Password</label><input id="pw" type="password" autocomplete="current-password"></div>
     <button class="btn btn-primary btn-lg btn-block" id="go">Sign in</button>
     <div class="alt"><button id="magic">Email me a sign-in link instead</button> · <button id="signup">Create account</button></div>
     <div class="alt" style="margin-top:22px"><button id="demo2">Try the demo</button></div>`);
-  $('#go').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('#em').value.trim(), password: $('#pw').value }); if (error) return signInScreen(error.message); await afterSignIn(); };
+  $('#go').onclick = async () => { const email = $('#em').value.trim(); if (!email || !$('#pw').value) return signInScreen('Enter your email and password first.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithPassword({ email, password: $('#pw').value }); if (error) return signInScreen(error.message, email); await afterSignIn(); };
   $('#pw').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
-  $('#magic').onclick = async () => { const { error } = await sb.auth.signInWithOtp({ email: $('#em').value.trim(), options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.'); };
-  $('#signup').onclick = async () => { const { error } = await sb.auth.signUp({ email: $('#em').value.trim(), password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. If email confirmation is on, confirm then sign in.'); };
+  $('#magic').onclick = async () => { const email = $('#em').value.trim(); if (!email) return signInScreen('Enter your email first.'); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.', email); };
+  $('#signup').onclick = async () => { const email = $('#em').value.trim(); if (!email || $('#pw').value.length < 8) return signInScreen('Type your email and a new password (8+ characters) in the boxes above, then tap Create account.', email); localStorage.setItem('hb_last_email', email); const { error } = await sb.auth.signUp({ email, password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. Check your email for the confirmation link, then sign in here.', email); };
   $('#demo2').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
 }
 async function afterSignIn() {
@@ -309,8 +476,10 @@ async function afterSignIn() {
   if (!mem?.length) return householdScreen();
   S.hh = mem[0].household_id; S.household = mem[0].households; S.tz = S.household?.tz || S.tz; S.settings = S.household?.settings || {};
   await api.load();
-  S.person = S.get('people', mem[0].person_id) || S.people.find(p => p.is_user) || null;
+  S.me = S.get('people', mem[0].person_id) || S.people.find(p => p.is_user) || null;
+  S.person = resolveActivePerson();
   api.subscribe();
+  api.deviceSync().catch(() => {});
   start();
 }
 function householdScreen(msg = '') {
@@ -328,6 +497,8 @@ function householdScreen(msg = '') {
 function start() {
   showApp();
   loadWeather();
+  renderPersonPill(); onChange(t => { if (t.has('people')) renderPersonPill(); });
+  initAttachments();
   onChange(tables => { if (W.open) renderWall(); if ($('#sheet').classList.contains('open') && !tables.has('list_items') && !tables.has('memories')) return; renderers[view]?.(); if (tables.has('tasks') || tables.has('maintenance_rules')) updateBadges(); });
   updateBadges();
   const initial = WALL_START ? 'today' : (location.hash.slice(1) || 'today');
