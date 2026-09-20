@@ -3,5 +3,5 @@
 window.HB_CONFIG = {
   supabaseUrl: 'https://whcybmydykhicergqokx.supabase.co',
   supabaseAnonKey: 'sb_publishable_7ViDJ_JcC43DBuO07WNS7Q_MBfmY8Pq',
-  workerUrl: '',   // paste the Cloudflare Worker URL here once deployed (e.g. https://homebase-ai.<sub>.workers.dev)
+  workerUrl: 'https://homebase-proxy.hlchampness.workers.dev',
 };
