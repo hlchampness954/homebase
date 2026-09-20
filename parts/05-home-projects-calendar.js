@@ -77,6 +77,14 @@ renderers.home = function renderHome() {
     const inp = h('input', { class: 'chip', style: 'width:100%;margin:6px 0 4px;font-weight:500', placeholder: 'Add item…', onkeydown: async e => { if (e.key === 'Enter' && e.target.value.trim()) { await dbInsert('list_items', { list_id: l.id, text: e.target.value.trim(), sort: items.length }, { silent: true }); e.target.value = ''; } } });
     lb.append(h('div', { style: 'padding:0 6px' }, inp)); lc.append(lb); grid.append(lc);
   });
+  // Recent files & photos (household-wide; the AI files them, this is the browse view)
+  const recent = S.all('files').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 12);
+  if (recent.length) {
+    const fcard = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '📎 Recent files'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => { openAI(); $('#pick-files').click(); } }, '+ Add')));
+    const fg = h('div', { class: 'files-grid' });
+    recent.forEach(f => { const links = S.all('file_links').filter(l => l.file_id === f.id && l.entity_type !== 'ai_thread'); const el = h('div', { class: 'f', onclick: () => openFile(f), title: [f.ai_summary || f.caption || f.original_name, links.length ? `→ ${links.map(l => l.entity_type).join(', ')}` : 'not linked yet'].join('\n') }); const th = h('div', { class: 'th' }, fileIcon(f.mime_type)); el.append(th, h('div', { class: 'nm' }, f.caption || f.original_name || f.kind)); if (/^image\//.test(f.mime_type || '')) api.signedUrl(f.metadata?.derivative_path || f.storage_path).then(u => { if (u) th.replaceWith(h('img', { class: 'th', src: u, alt: '' })); }).catch(() => {}); fg.append(el); });
+    fcard.append(fg); grid.append(fcard);
+  }
   body.append(grid); body.scrollTop = sc;
 };
 function stat(v, l) { return h('div', {}, h('div', { class: 'display', style: 'font-size:22px' }, v), h('div', { class: 'faint', style: 'font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em' }, l)); }
@@ -216,6 +224,8 @@ renderers.projects = function renderProjects(params) {
     const cc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Costs'), h('div', { style: 'display:flex;gap:8px;align-items:center' }, p.budget ? h('span', { class: 'tag ' + (ta > p.budget ? 'coral' : 'sage') }, `${money(ta)} of ${money(p.budget)}`) : null, h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openCostEditor(null, p) }, '+ Item'))));
     if (costs.length) { const tb = h('table', { class: 'costs' }, h('thead', {}, h('tr', {}, h('th', {}, 'Item'), h('th', {}, 'Qty'), h('th', { class: 'num' }, 'Planned'), h('th', { class: 'num' }, 'Actual'))), h('tbody', {}, ...costs.map(c => h('tr', { style: 'cursor:pointer', onclick: () => openCostEditor(c, p) }, h('td', {}, c.item), h('td', { class: 'faint' }, c.qty || ''), h('td', { class: 'num' }, money(c.projected)), h('td', { class: 'num', style: c.actual != null ? 'color:var(--sage)' : '' }, money(c.actual))))), h('tfoot', {}, h('tr', {}, h('td', { colspan: 2 }, 'Total'), h('td', { class: 'num' }, money(tp)), h('td', { class: 'num' }, money(ta))))); cc.append(h('div', { style: 'padding:0 8px 8px;overflow-x:auto' }, tb)); } else cc.append(h('div', { class: 'empty' }, 'Materials and purchases go here.'));
     sc2.append(cc);
+    // files & photos linked by the AI (receipts, progress photos)
+    const fc = filesCard('project', p.id, { extra: { name: p.name } }); if (fc) sc2.append(fc);
     // linked tasks & notes
     const linked = S.all('tasks').filter(t => t.project_id === p.id && t.status === 'open'); const pnotes = S.all('notes').filter(n => n.project_id === p.id);
     if (linked.length || pnotes.length) { const lc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Linked'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openTaskEditor(null, { project_id: p.id, area_id: p.area_id }) }, '+ Task'))); const lb = h('div', { class: 'card-bd' }); linked.forEach(t => lb.append(taskRow(t))); pnotes.forEach(n => lb.append(h('div', { class: 'row', onclick: () => openNoteEditor(n) }, h('div', { class: 'ico' }, '📝'), h('div', { class: 'body' }, h('div', { class: 'title' }, n.title), h('div', { class: 'ctx' }, n.body || '')), svgChev()))); lc.append(lb); sc2.append(lc); }
