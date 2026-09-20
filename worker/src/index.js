@@ -9,6 +9,7 @@
 import * as D from '../../shared/dates.js';
 import { nextOccurrence, normalizeRule, describeRule, expectedGapDays } from '../../shared/recurrence.js';
 import { planDay, needsAttention, replan, settingsOf, nextStepOf } from '../../shared/planner.js';
+import { resolveAttachments, buildUserContent, slimFile, signedUrl, deleteObjects } from './attachments.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tiny utils
@@ -238,7 +239,9 @@ function entityMentions(ctx, text) {
 
 async function retrieveMemories(ctx, message, view) {
   const q = String(message || '').trim();
-  const prefs = ctx.memories.filter(m => m.kind === 'preference' && Number(m.confidence) >= 0.8);
+  const pid = ctx.activePersonId || null;
+  const inScope = m => !m.person_id || m.person_id === pid;
+  const prefs = ctx.memories.filter(m => inScope(m) && m.kind === 'preference' && Number(m.confidence) >= 0.8);
   let hits = [];
   if (q) {
     const clean = q.replace(/[():|&!*'"<>\\,]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -251,7 +254,7 @@ async function retrieveMemories(ctx, message, view) {
   const anchored = entityMentions(ctx, q).flatMap(e => ctx.memories.filter(m => m.entity_type === e.type && m.entity_id === e.id));
   const subj = VIEW_SUBJECT[view];
   const bySubject = subj ? ctx.memories.filter(m => m.subject === subj).slice(0, 6) : [];
-  const out = uniqBy([...prefs, ...hits, ...anchored, ...bySubject], m => m.id).slice(0, 30);
+  const out = uniqBy([...prefs, ...hits, ...anchored, ...bySubject].filter(inScope), m => m.id).slice(0, 30);
   const stamp = out.length ? ctx.db.update('memories', { id: out.map(m => m.id) }, { last_used_at: nowIso() }).catch(() => {}) : Promise.resolve();
   return { memories: out, stamp };
 }
@@ -275,9 +278,11 @@ export function buildSystemPrompt({ ctx = {}, plan = null, attention = [], memor
 
   L.push(`NOW: ${D.longDate(today)} (${today}) at ${ctx.now || D.nowHM(ctx.tz || DEFAULT_TZ)} ${ctx.tz || DEFAULT_TZ}. Client: view=${context.view || 'today'}${context.date ? ` date=${context.date}` : ''}${context.device ? ` device=${context.device}` : ''}.`);
   L.push(`Household: ${name} — ${who}'s home in New Braunfels, Texas, shared with ${petText}.`);
+  const speaker = (ctx.people || []).find(p => p.id === (context.active_person_id || ctx.activePersonId));
+  L.push(speaker ? `SPEAKING: ${speaker.name} [${speaker.id}] (device default). "me"/"my"/"remind me" = ${speaker.name}; assign new personal tasks to them unless told otherwise; person-scoped memories about them use person="me".` : 'SPEAKING: shared household device (no default person). Ask who a personal task is for if it matters; otherwise leave it unassigned (anyone).');
 
   L.push('', 'HOUSEHOLD PROFILE');
-  L.push(`People: ${(ctx.people || []).map(p => `${p.name}${p.is_user ? ' (user)' : ''} [${p.id}]`).join('; ') || 'Luke, Hayley'}`);
+  L.push(`People: ${(ctx.people || []).map(p => `${p.name}${p.kind === 'child' ? ' (child)' : ''}${p.is_user ? ' (user)' : ''} [${p.id}]`).join('; ') || 'Luke, Hayley'}`);
   if (pets.length) L.push(`Pets: ${pets.map(p => `${p.name} (${p.species || 'pet'}${p.breed ? `, ${p.breed}` : ''}) [${p.id}]`).join('; ')}`);
   if (ctx.areas?.length) L.push(`Areas: ${ctx.areas.map(a => a.name).join(', ')}`);
   const projects = (ctx.projects || []).filter(p => p.status === 'active');
@@ -328,6 +333,8 @@ export const SYSTEM_STATIC = [
   '- Budgets & quotes: build line-item estimates with realistic current prices (name the source/store), quantities with a waste factor, labour vs DIY options, and a total with a contingency. Offer to save them as project costs (add_project_cost) and vendor notes (create_note with vendor=true, phone, url).',
   '- Project setup: when they ask to plan/add a project, use create_project with ordered steps (with phases and time estimates) and cost lines in one call, then summarise. Rank it against existing projects by priority.',
   '- Normal conversation: if they just want to talk, think something through, or ask a general question, answer like a thoughtful friend — no tools needed.',
+  '- Attachments (photos, receipts, manuals, screenshots, PDFs): the message is the authority for what a file is; otherwise look at it, then search household context (projects, plants, assets, vendors) before filing. Low-risk + clear → link_file + update_file_metadata and say what you did (Undo is shown). Receipt → extract merchant/date/total/items, link to the project (rel receipt) and add_project_cost with actual cost; nameplate → update the asset\'s brand/model/serial (update_record) and link (rel nameplate); plant photo → log_plant_observation + link (rel observation); manual → link to the asset (rel manual). Ambiguous destination → ask ONE short question ("Nursery or Patio?"). Never delete files without the confirmation card.',
+  '- People: the SPEAKING line says who is talking on this device. "me/my/remind me" = that person; "give Hayley…", "for Luke" → assign_task or create_task(assignee). Household/shared work stays unassigned. Person-scoped facts go to save_memory with person set; household facts leave it empty. get_person_context answers "what does Hayley have this week?"; get_household_overview answers "what is going on with the house?"; get_recent_changes answers "what changed / what did we do?".',
   '',
   'HOW TO WORK',
   '- Use tools for anything about their data. Never invent ids; search or list first, then act. Names may be given loosely ("the HVAC filter rule") — tools resolve names leniently.',
@@ -414,7 +421,21 @@ export const TOOLS = [
   { name: 'link', description: 'Relate two records (task, project, step, note, asset, plant, pet, event, routine, maintenance_rule, room, area).', input_schema: S({ from_type: str('Entity type'), from_id: str('uuid'), to_type: str('Entity type'), to_id: str('uuid'), rel: str('Relationship label (default related)') }, ['from_type', 'from_id', 'to_type', 'to_id']) },
 
   // ── write: memory ──
-  { name: 'save_memory', description: 'Remember something durable the user stated (preference, fact, habit). One plain sentence.', input_schema: S({ subject: str('scheduling | home | projects | plants | pets | family | preferences | people', { enum: ['scheduling', 'home', 'projects', 'plants', 'pets', 'family', 'preferences', 'people'] }), kind: str('fact | preference | pattern | stat', { enum: ['fact', 'preference', 'pattern', 'stat'] }), content: str('One sentence'), confidence: num('0-1 (default 0.9 for stated)'), entity_type: str('Anchor type: routine | project | plant | pet | asset | maintenance_rule | task_series | person | area'), entity_id: str('Anchor uuid') }, ['subject', 'kind', 'content']) },
+  { name: 'save_memory', description: 'Remember something durable the user stated (preference, fact, habit). One plain sentence. person="me" (or a name) scopes it to that person; omit for household-wide.', input_schema: S({ subject: str('scheduling | home | projects | plants | pets | family | preferences | people', { enum: ['scheduling', 'home', 'projects', 'plants', 'pets', 'family', 'preferences', 'people'] }), kind: str('fact | preference | pattern | stat', { enum: ['fact', 'preference', 'pattern', 'stat'] }), content: str('One sentence'), confidence: num('0-1 (default 0.9 for stated)'), entity_type: str('Anchor type: routine | project | plant | pet | asset | maintenance_rule | task_series | person | area'), entity_id: str('Anchor uuid'), person: str('"me", a person name/uuid, or omit for household-wide') }, ['subject', 'kind', 'content']) },
+  { name: 'assign_task', description: 'Set who a task belongs to: one or more people (owner + helpers), "me", or nobody (household / anyone). Replaces the current assignment.', input_schema: S({ id: refP('Task'), people: { type: 'array', items: str('"me", person name or uuid'), description: 'Empty array = unassigned (anyone)' }, role: str('owner | helper (default owner for the first, helper for the rest)', { enum: ['owner', 'helper', 'watcher'] }) }, ['id', 'people']) },
+
+  // ── household context (spec §11) ──
+  { name: 'get_household_overview', description: 'Compact cross-domain snapshot: people, today\'s plan, week calendar, active projects + next steps, overdue/due-soon maintenance, plants needing water, open lists, recent files and recent activity. Use for broad questions ("what is going on with the house?").', input_schema: S({}) },
+  { name: 'get_person_context', description: 'One person\'s lens: their assigned/open tasks, upcoming events, routines they own, day modes and person-scoped memories.', input_schema: S({ person: str('"me", name or uuid (default: the speaking person)') }) },
+  { name: 'get_recent_changes', description: 'What changed since a time: activity log entries plus rows created/updated across tasks, events, projects, steps, costs, maintenance, routines, plants, notes, files and memories.', input_schema: S({ since: str('ISO timestamp or YYYY-MM-DD (default: 24 hours ago)'), limit: int('Max entries per table (default 30)') }) },
+
+  // ── files & attachments (spec §6) ──
+  { name: 'get_file', description: 'One file\'s metadata, links and (for images/PDF/text) a short-lived view URL.', input_schema: S({ id: str('file uuid'), with_url: bool('Include a 15-minute signed URL') }, ['id']) },
+  { name: 'search_files', description: 'Find household files by text (name, caption, AI summary, extracted text), kind, or linked entity.', input_schema: S({ q: str('Search text'), kind: str('photo | scan | manual | receipt | document'), entity_type: str('Linked entity type filter'), entity_id: str('Linked entity uuid filter'), limit: int('Max rows (default 20)') }) },
+  { name: 'link_file', description: 'Attach an existing file to one or more household records (project, project_cost, plant, plant_observation, asset, maintenance_log, note, task, event, room, area, pet, routine). rel: receipt | manual | progress_photo | nameplate | observation | before | after | related.', input_schema: S({ file_id: str('file uuid'), links: { type: 'array', items: S({ entity_type: str('Entity type'), entity_id: str('uuid, or a name for project/plant/asset/area/room/pet/routine/note'), rel: str('Relationship (default related)') }, ['entity_type', 'entity_id']), description: 'Targets' } }, ['file_id', 'links']) },
+  { name: 'unlink_file', description: 'Remove a link between a file and a record (the file itself is kept).', input_schema: S({ file_id: str('file uuid'), entity_type: str('Entity type'), entity_id: str('uuid'), rel: str('Relationship (omit = any)') }, ['file_id', 'entity_type', 'entity_id']) },
+  { name: 'update_file_metadata', description: 'Save what you learned about a file: caption, kind, ai_summary (one line), extracted_text (receipt lines, nameplate text, key facts), tags, structured receipt {merchant,date,total,items} or nameplate {brand,model,serial} data.', input_schema: S({ id: str('file uuid'), caption: str('Short human caption'), kind: str('photo | scan | manual | receipt | document', { enum: ['photo', 'scan', 'manual', 'receipt', 'document'] }), ai_summary: str('One line'), extracted_text: str('Verbatim useful text'), tags: { type: 'array', items: str('tag') }, receipt: { type: 'object', description: '{merchant, date, total, items:[{name, qty, price}]}', additionalProperties: true }, nameplate: { type: 'object', description: '{brand, model, serial, specs}', additionalProperties: true }, taken_at: tsP('When the photo/document was made') }, ['id']) },
+  { name: 'delete_file', description: 'Delete a file and its storage object (proposal — user confirms). Prefer unlink_file when only the link is wrong.', confirm: true, input_schema: S({ id: str('file uuid'), reason: str('Why') }, ['id']) },
   { name: 'update_memory', description: 'Edit a memory\'s wording, confidence (1.0 = confirmed) or status (active | ignored).', input_schema: S({ id: str('Memory uuid'), content: str('New wording'), status: str('active | ignored', { enum: ['active', 'ignored'] }), confidence: num('0-1') }, ['id']) },
   { name: 'forget_memory', description: 'Delete a memory (proposal — user confirms).', confirm: true, input_schema: S({ id: str('Memory uuid') }, ['id']) },
   { name: 'bulk_update', description: 'Apply the same change to many tasks at once (proposal — user confirms).', confirm: true, input_schema: S({ task_ids: { type: 'array', items: str('Task uuid'), description: 'Tasks to change' }, patch: { type: 'object', description: 'Fields to change', properties: TASK_PATCH_PROPS, additionalProperties: false } }, ['task_ids', 'patch']) },
@@ -440,14 +461,14 @@ const TOOL_INDEX = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime (per request): db, lazy ctx, action log + SSE emitter
 // ─────────────────────────────────────────────────────────────────────────────
-const TABLE_OF = { task: 'tasks', event: 'events', project: 'projects', project_step: 'project_steps', project_cost: 'project_costs', maintenance_rule: 'maintenance_rules', maintenance_log: 'maintenance_log', routine: 'routines', routine_log: 'routine_log', plant: 'plants', plant_observation: 'plant_observations', pet_activity: 'pet_activities', list: 'lists', list_item: 'list_items', note: 'notes', link: 'links', memory: 'memories', day_mode: 'day_modes', area: 'areas', room: 'rooms', asset: 'assets', pet: 'pets', person: 'people', household: 'households' };
+const TABLE_OF = { task: 'tasks', event: 'events', project: 'projects', project_step: 'project_steps', project_cost: 'project_costs', maintenance_rule: 'maintenance_rules', maintenance_log: 'maintenance_log', routine: 'routines', routine_log: 'routine_log', plant: 'plants', plant_observation: 'plant_observations', pet_activity: 'pet_activities', list: 'lists', list_item: 'list_items', note: 'notes', link: 'links', memory: 'memories', day_mode: 'day_modes', area: 'areas', room: 'rooms', asset: 'assets', pet: 'pets', person: 'people', file: 'files', file_link: 'file_links', task_assignment: 'task_assignments', household: 'households' };
 
-function makeRuntime(env, { hh, userId = null, personId = null, actor = 'ai', emit = async () => {} }) {
+function makeRuntime(env, { hh, userId = null, personId = null, activePersonId = null, actor = 'ai', emit = async () => {} }) {
   const db = makeDb(env, hh);
   let ctxPromise = null;
   const tz = env.HOUSEHOLD_TZ || DEFAULT_TZ;
   const rt = {
-    env, db, hh, userId, personId, actor, emit, actions: [], proposals: [], tz, today: D.todayIn(tz), now: D.nowHM(tz),
+    env, db, hh, userId, personId, activePersonId: activePersonId || personId, actor, emit, actions: [], proposals: [], tz, today: D.todayIn(tz), now: D.nowHM(tz),
     // Full planner context; cached until a mutation calls dirty(). Also pins tz/today/now for cheap tools.
     getCtx() { if (!ctxPromise) ctxPromise = loadCtx(env, hh, db).then(c => { rt.tz = c.tz; rt.today = c.today; rt.now = c.now; return c; }); return ctxPromise; },
     dirty() { ctxPromise = null; },
@@ -508,6 +529,14 @@ async function resolveTask(rt, ref) {
   return resolve(rt, 'tasks', ref, { label: 'task' });
 }
 const resolveId = async (rt, table, ref, label) => (ref == null || ref === '' ? null : (await resolve(rt, table, ref, { label })).id);
+// "me" → the speaking person; a name/uuid → that person; null/''/"household"/"anyone" → null
+async function personIdOf(rt, ref) {
+  if (ref == null || ref === '') return null;
+  const s = String(ref).trim().toLowerCase();
+  if (['household', 'anyone', 'shared', 'nobody', 'none', 'everyone'].includes(s)) return null;
+  if (s === 'me' || s === 'myself' || s === 'i') { if (!rt.activePersonId) throw new ToolError('No speaking person on this device — say the name instead'); return rt.activePersonId; }
+  return resolveId(rt, 'people', ref, 'person');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row shapers (what the model sees) and small domain helpers
@@ -534,7 +563,7 @@ async function normalizeTaskPatch(rt, p = {}) {
   if ('recurrence' in p) out.recurrence = p.recurrence && p.recurrence.freq ? normalizeRule(p.recurrence) : null;
   if ('area' in p) out.area_id = await resolveId(rt, 'areas', p.area, 'area');
   if ('project' in p) out.project_id = await resolveId(rt, 'projects', p.project, 'project');
-  if ('assignee' in p) out.assignee_id = await resolveId(rt, 'people', p.assignee, 'person');
+  if ('assignee' in p) out.assignee_id = await personIdOf(rt, p.assignee);
   if (out.duration_min != null) out.duration_min = clampInt(out.duration_min, 1, 1440, 30);
   if (out.scheduled_start && !out.scheduled_end) out.scheduled_end = new Date(+new Date(out.scheduled_start) + (out.duration_min || 30) * 60000).toISOString();
   return out;
@@ -1083,11 +1112,12 @@ const TOOL_IMPL = {
   },
 
   // ── write: memory ──
-  async save_memory({ subject, kind, content, confidence, entity_type, entity_id }, rt) {
+  async save_memory({ subject, kind, content, confidence, entity_type, entity_id, person }, rt) {
     if (!content || !subject || !kind) throw new ToolError('subject, kind and content are required');
     const [dup] = await rt.db.select('memories', { content: `ilike.${likePattern(content)}`, status: 'active', limit: 1 });
     if (dup) return { memory: slimMemory(dup), already_known: true };
-    const [m] = await rt.db.insert('memories', { subject, kind, content: String(content).trim(), source: 'stated', confidence: Math.min(1, Math.max(0, Number(confidence ?? 0.9))).toFixed(2), entity_type: entity_type || null, entity_id: isUuid(String(entity_id)) ? entity_id : null, last_confirmed_at: nowIso() });
+    const person_id = await personIdOf(rt, person);
+    const [m] = await rt.db.insert('memories', { subject, kind, content: String(content).trim(), source: 'stated', confidence: Math.min(1, Math.max(0, Number(confidence ?? 0.9))).toFixed(2), entity_type: entity_type || null, entity_id: isUuid(String(entity_id)) ? entity_id : null, person_id, last_confirmed_at: nowIso() });
     await rt.act({ entity_type: 'memory', entity_id: m.id, action: 'create', after: slimMemory(m), summary: `Remembered: ${m.content}` });
     rt.dirty();
     return { memory: slimMemory(m), remembered: m.content };
@@ -1128,6 +1158,158 @@ const TOOL_IMPL = {
     await rt.act({ entity_type: 'task', entity_id: null, action: 'update', before: before.map(t => pick(t, ['id', ...Object.keys(p)])), after: { ids, patch: p }, reason: 'bulk', summary: `Updated ${rows.length} tasks (${Object.keys(p).join(', ')})`, undo: { op: 'bulk_update', table: 'tasks', rows: before.map(t => ({ id: t.id, patch: pick(t, Object.keys(p)) })) } });
     rt.dirty();
     return { updated: rows.length, tasks: rows.map(slimTask) };
+  },
+
+  // ── people / assignment ──
+  async assign_task({ id, people, role }, rt) {
+    const t = await resolveTask(rt, id);
+    const ids = []; for (const p of people || []) { const pid = await personIdOf(rt, p); if (pid && !ids.includes(pid)) ids.push(pid); }
+    const before = await rt.db.select('task_assignments', { task_id: t.id, select: 'person_id,role' });
+    if (before.length) await rt.db.del('task_assignments', { task_id: t.id });
+    if (ids.length) await rt.db.insert('task_assignments', ids.map((pid, i) => ({ task_id: t.id, person_id: pid, role: i === 0 ? (role === 'helper' || role === 'watcher' ? role : 'owner') : (role && role !== 'owner' ? role : 'helper') })));
+    await rt.db.update('tasks', { id: t.id }, { assignee_id: ids[0] || null });   // legacy owner column stays in step
+    const names = await Promise.all(ids.map(async pid => (await rt.db.select('people', { id: pid, select: 'name' }))[0]?.name || pid));
+    await rt.act({ entity_type: 'task', entity_id: t.id, action: 'update', before: { assignee_id: t.assignee_id, assignments: before }, after: { assignee_id: ids[0] || null, assignments: ids }, summary: names.length ? `"${t.title}" → ${names.join(' + ')}` : `"${t.title}" → anyone`, undo: { op: 'update', table: 'tasks', id: t.id, patch: { assignee_id: t.assignee_id || null } } });
+    rt.dirty();
+    return { task_id: t.id, people: names };
+  },
+
+  // ── household context (spec §11) ──
+  async get_household_overview(_, rt) {
+    const ctx = await rt.getCtx(); const today = ctx.today;
+    const plan = planDay(today, ctx); const attn = needsAttention(ctx);
+    const week = D.addDays(today, 7);
+    const [files, activity, lists, items] = await Promise.all([
+      rt.db.select('files', { select: 'id,original_name,kind,caption,ai_summary,created_at', order: 'created_at.desc', limit: 8 }),
+      rt.db.select('activity_log', { select: 'at,actor,entity_type,action,after,reason', order: 'at.desc', limit: 15 }),
+      rt.db.select('lists', { archived: false, select: 'id,name,kind' }),
+      rt.db.select('list_items', { done: false, select: 'list_id,text,qty', limit: 60 }),
+    ]);
+    const overdue = ctx.maintenance.filter(m => m.next_due && m.next_due < today), soon = ctx.maintenance.filter(m => m.next_due && m.next_due >= today && m.next_due <= D.addDays(today, 14));
+    const thirsty = ctx.plants.filter(p => p.water_interval_days && (!p.last_water || D.diffDays(p.last_water, today) >= p.water_interval_days));
+    return {
+      today, now: ctx.now, mode: plan.capacity?.mode, capacity_min: plan.capacity?.minutes, planned_min: plan.used,
+      people: ctx.people.map(p => ({ id: p.id, name: p.name, kind: p.kind })), pets: ctx.pets.map(p => ({ id: p.id, name: p.name })),
+      must_do: (plan.must || []).map(slimCand), planned: (plan.planned || []).map(slimCand), needs_attention: attn.map(a => a.title),
+      open_tasks: ctx.tasks.length, overdue_tasks: ctx.tasks.filter(t => t.due_date && t.due_date < today).map(slimTask).slice(0, 15),
+      week_calendar: ctx.events.filter(e => D.dateOf(e.starts_at, ctx.tz) >= today && D.dateOf(e.starts_at, ctx.tz) <= week).map(slimEvent).slice(0, 30),
+      projects: ctx.projects.map(p => { const steps = ctx.steps.filter(s => s.project_id === p.id); const next = nextStepOf(p.id, ctx); return { ...slimProject(p), steps_done: steps.filter(s => s.status === 'done').length, steps_total: steps.length, next_step: next ? next.title : null }; }),
+      maintenance: { overdue: overdue.map(slimRule), due_soon: soon.map(slimRule) },
+      plants_needing_water: thirsty.map(p => ({ id: p.id, name: p.name, last_water: p.last_water })),
+      routines: ctx.routines.map(slimRoutine),
+      lists: lists.map(l => ({ ...l, open_items: items.filter(i => i.list_id === l.id).map(i => i.qty ? `${i.text} (${i.qty})` : i.text) })),
+      recent_files: files, recent_activity: activity.map(a => ({ at: a.at, actor: a.actor, what: `${a.action} ${a.entity_type}`, detail: a.after?.title || a.after?.name || a.reason || null })),
+      weather: ctx.weather,
+    };
+  },
+
+  async get_person_context({ person }, rt) {
+    const ctx = await rt.getCtx();
+    const pid = await personIdOf(rt, person || 'me');
+    if (!pid) throw new ToolError('No person selected — say who (name) or use a personal device');
+    const p = ctx.people.find(x => x.id === pid);
+    const [assign, mems] = await Promise.all([rt.db.select('task_assignments', { person_id: pid, select: 'task_id,role' }), rt.db.select('memories', { person_id: pid, status: 'active', order: 'confidence.desc', limit: 40 })]);
+    const mine = new Set(assign.map(a => a.task_id));
+    const tasks = ctx.tasks.filter(t => mine.has(t.id) || t.assignee_id === pid);
+    const unassigned = ctx.tasks.filter(t => !t.assignee_id && !assign.some(a => a.task_id === t.id)).length;
+    return { person: { id: p?.id, name: p?.name, kind: p?.kind }, tasks: tasks.map(slimTask), shared_unassigned_tasks: unassigned,
+      events: ctx.events.filter(e => (e.people_ids || []).includes(pid) && D.dateOf(e.starts_at, ctx.tz) >= ctx.today).map(slimEvent).slice(0, 20),
+      day_modes: ctx.dayModes.filter(d => d.person_id === pid || !d.person_id).map(d => pick(d, ['date', 'mode', 'note'])),
+      memories: mems.map(slimMemory) };
+  },
+
+  async get_recent_changes({ since, limit }, rt) {
+    let ts = since ? (isDate(since) ? D.toISO(since, '00:00', rt.tz) : new Date(since).toISOString()) : new Date(Date.now() - 86400e3).toISOString();
+    if (ts === 'Invalid Date') throw new ToolError('since must be ISO or YYYY-MM-DD');
+    const n = clampInt(limit, 1, 100, 30);
+    const tables = ['tasks', 'events', 'projects', 'project_steps', 'project_costs', 'maintenance_log', 'routine_log', 'plant_observations', 'notes', 'files', 'memories', 'list_items'];
+    const [activity, ...rows] = await Promise.all([
+      rt.db.select('activity_log', { at: `gte.${ts}`, select: 'at,actor,entity_type,entity_id,action,after,reason', order: 'at.desc', limit: 100 }),
+      ...tables.map(t => rt.db.select(t, { or: `(created_at.gte.${ts}${['tasks', 'events', 'projects', 'project_steps', 'project_costs', 'notes', 'files', 'memories', 'list_items'].includes(t) ? `,updated_at.gte.${ts}` : ''})`, order: 'created_at.desc', limit: n }).catch(() => [])),
+    ]);
+    const out = { since: ts, activity: activity.map(a => ({ at: a.at, actor: a.actor, what: `${a.action} ${a.entity_type}`, id: a.entity_id, detail: a.after?.title || a.after?.name || a.after?.summary || a.reason || null })) };
+    tables.forEach((t, i) => { if (rows[i]?.length) out[t] = rows[i].map(r => pick(r, ['id', 'title', 'name', 'item', 'kind', 'status', 'content', 'original_name', 'ai_summary', 'due_date', 'starts_at', 'done_at', 'at', 'created_at', 'updated_at'])); });
+    return out;
+  },
+
+  // ── files (spec §6) ──
+  async get_file({ id, with_url }, rt) {
+    const [f] = await resolveAttachments(rt, [id]);
+    if (!f) throw new ToolError('No file with that id in this household');
+    const out = { file: slimFile(f), links: f.links };
+    if (with_url) { try { out.url = await signedUrl(rt.env, f.metadata?.derivative_path || f.storage_path); out.url_expires_in_s = 900; } catch (e) { out.url_error = e.message; } }
+    return out;
+  },
+
+  async search_files({ q, kind, entity_type, entity_id, limit }, rt) {
+    const n = clampInt(limit, 1, 50, 20); let rows = [];
+    if (entity_type && isUuid(String(entity_id))) {
+      const links = await rt.db.select('file_links', { entity_type, entity_id, select: 'file_id,rel' });
+      rows = links.length ? await rt.db.select('files', { id: uniqBy(links.map(l => l.file_id), x => x), ...(kind ? { kind } : {}), order: 'created_at.desc', limit: n }) : [];
+    } else if (q) {
+      const clean = String(q).replace(/[():|&!*'"<>\\,]/g, ' ').replace(/\s+/g, ' ').trim();
+      try { rows = await rt.db.select('files', { fts: `wfts(english).${clean}`, ...(kind ? { kind } : {}), order: 'created_at.desc', limit: n }); } catch { rows = []; }
+      if (!rows.length) rows = await rt.db.select('files', { or: `(original_name.ilike.${likePattern(q)},caption.ilike.${likePattern(q)},ai_summary.ilike.${likePattern(q)})`, ...(kind ? { kind } : {}), order: 'created_at.desc', limit: n });
+    } else rows = await rt.db.select('files', { ...(kind ? { kind } : {}), order: 'created_at.desc', limit: n });
+    const links = rows.length ? await rt.db.select('file_links', { file_id: rows.map(r => r.id), select: 'file_id,entity_type,entity_id,rel' }) : [];
+    return { count: rows.length, files: rows.map(f => ({ ...slimFile(f), links: links.filter(l => l.file_id === f.id && l.entity_type !== 'ai_thread') })) };
+  },
+
+  async link_file({ file_id, links }, rt) {
+    const [f] = await resolveAttachments(rt, [file_id]);
+    if (!f) throw new ToolError('No file with that id in this household');
+    const made = [];
+    for (const l of (links || []).slice(0, 10)) {
+      const table = TABLE_OF[l.entity_type] || (l.entity_type === 'ai_thread' ? 'ai_threads' : null);
+      if (!table) throw new ToolError(`Unknown entity_type "${l.entity_type}"`);
+      const row = isUuid(String(l.entity_id)) ? (await rt.db.select(table, { id: l.entity_id }))[0] : await resolve(rt, table, l.entity_id, { label: l.entity_type });
+      if (!row) throw new ToolError(`No ${l.entity_type} ${l.entity_id}`);
+      const rel = String(l.rel || 'related').toLowerCase().replace(/[^a-z_]/g, '_').slice(0, 30) || 'related';
+      await rt.db.upsert('file_links', { file_id: f.id, entity_type: l.entity_type, entity_id: row.id, rel, created_by: rt.userId }, 'file_id,entity_type,entity_id,rel');
+      made.push({ entity_type: l.entity_type, entity_id: row.id, name: row.name || row.title || row.item || null, rel });
+    }
+    await rt.act({ entity_type: 'file', entity_id: f.id, action: 'update', after: { linked: made }, summary: `Filed "${f.original_name || 'file'}" → ${made.map(m => `${m.name || m.entity_type} (${m.rel})`).join(', ')}`, undo: null });
+    rt.dirty();
+    return { file_id: f.id, linked: made };
+  },
+
+  async unlink_file({ file_id, entity_type, entity_id, rel }, rt) {
+    const [f] = await resolveAttachments(rt, [file_id]);
+    if (!f) throw new ToolError('No file with that id in this household');
+    const match = { file_id: f.id, entity_type, entity_id, ...(rel ? { rel } : {}) };
+    const gone = await rt.db.del('file_links', match);
+    await rt.act({ entity_type: 'file', entity_id: f.id, action: 'update', before: { unlinked: gone }, summary: `Unlinked "${f.original_name || 'file'}" from ${entity_type}`, undo: null });
+    rt.dirty();
+    return { removed: gone.length };
+  },
+
+  async update_file_metadata({ id, caption, kind, ai_summary, extracted_text, tags, receipt, nameplate, taken_at }, rt) {
+    const [f] = await resolveAttachments(rt, [id]);
+    if (!f) throw new ToolError('No file with that id in this household');
+    const patch = {}; const meta = { ...(f.metadata || {}) };
+    if (caption != null) patch.caption = String(caption).slice(0, 200);
+    if (kind) patch.kind = kind;
+    if (ai_summary != null) patch.ai_summary = String(ai_summary).slice(0, 500);
+    if (extracted_text != null) patch.extracted_text = String(extracted_text).slice(0, 20000);
+    if (taken_at) patch.taken_at = normalizeTs(taken_at, rt.tz);
+    if (Array.isArray(tags)) meta.tags = uniqBy(tags.map(t => String(t).toLowerCase().trim()).filter(Boolean), x => x).slice(0, 20);
+    if (receipt && typeof receipt === 'object') meta.receipt = receipt;
+    if (nameplate && typeof nameplate === 'object') meta.nameplate = nameplate;
+    patch.metadata = meta; patch.processing_status = 'complete';
+    const [u] = await rt.db.update('files', { id: f.id }, patch);
+    await rt.act({ entity_type: 'file', entity_id: f.id, action: 'update', before: pick(f, Object.keys(patch)), after: patch, summary: `Understood "${u.caption || u.original_name || 'file'}"${u.ai_summary ? `: ${u.ai_summary}` : ''}`, quiet: true });
+    rt.dirty();
+    return { file: slimFile(u) };
+  },
+
+  async delete_file({ id, reason }, rt) {                    // executed only via /confirm
+    const [f] = await resolveAttachments(rt, [id]);
+    if (!f) throw new ToolError('No file with that id in this household');
+    await deleteObjects(rt.env, [f.storage_path, f.metadata?.derivative_path]);
+    await rt.db.del('files', { id: f.id });
+    await rt.act({ entity_type: 'file', entity_id: f.id, action: 'delete', before: slimFile(f), reason, summary: `Deleted file "${f.original_name || f.id}"`, undo: null });
+    rt.dirty();
+    return { deleted: f.original_name || f.id };
   },
 
   // ── projects (whole) ──
@@ -1245,7 +1427,7 @@ const ENTITIES = {
   project_steps: { type: 'project_step', label: 'step', nameCol: 'title', order: 'sort.asc', fields: ['project_id', 'title', 'phase', 'sort', 'status', 'depends_on', 'est_min', 'actual_min', 'note'], refs: { project_id: 'projects' }, slim: slimStep, archive: { kind: 'delete' } },
   project_costs: { type: 'project_cost', label: 'cost line', nameCol: 'item', order: 'created_at.asc', fields: ['project_id', 'item', 'qty', 'projected', 'actual', 'vendor', 'purchased_at', 'note'], refs: { project_id: 'projects' }, dates: ['purchased_at'], archive: { kind: 'delete' } },
   day_modes: { type: 'day_mode', label: 'day mode', nameCol: 'mode', order: 'date.asc', fields: ['date', 'mode', 'person_id', 'project_id', 'capacity_override_min', 'note'], refs: { person_id: 'people', project_id: 'projects' }, dates: ['date'], archive: { kind: 'delete' } },
-  people: { type: 'person', label: 'person', nameCol: 'name', order: 'sort.asc', fields: ['name', 'color', 'sort'], archive: { kind: 'delete' } },
+  people: { type: 'person', label: 'person', nameCol: 'name', order: 'sort.asc', fields: ['name', 'color', 'sort', 'kind', 'emoji', 'birthdate', 'notes'], dates: ['birthdate'], archive: { kind: 'delete' } },
   tasks: { type: 'task', label: 'task', nameCol: 'title', order: 'due_date.asc.nullslast', fields: ['title', 'notes', 'importance', 'due_date', 'window_start', 'window_end', 'duration_min', 'location', 'weather_dependent', 'energy', 'area_id', 'project_id', 'step_id', 'room_id', 'asset_id', 'assignee_id'], refs: { area_id: 'areas', project_id: 'projects', room_id: 'rooms', asset_id: 'assets', assignee_id: 'people' }, dates: ['due_date', 'window_start', 'window_end'], slim: slimTask, noCreate: 'create_task', archive: { kind: 'flag', col: 'status', value: 'cancelled' } },
   memories: { type: 'memory', label: 'memory', nameCol: 'content', order: 'confidence.desc', fields: ['subject', 'kind', 'content', 'confidence', 'status', 'entity_type', 'entity_id', 'data'], slim: slimMemory, noCreate: 'save_memory', archive: { kind: 'flag', col: 'status', value: 'ignored' } },
 };
@@ -1330,6 +1512,7 @@ async function proposalSummary(rt, tool, input) {
   if (tool === 'delete_task') { const t = await resolveTask(rt, input.id); input.id = t.id; return `Remove task "${t.title}"${t.due_date ? ` (due ${t.due_date})` : ''}`; }
   if (tool === 'forget_memory') { const [m] = await rt.db.select('memories', { id: input.id }); if (!m) throw new ToolError('No memory with that id'); return `Forget: "${m.content}"`; }
   if (tool === 'bulk_update') { const p = await normalizeTaskPatch(rt, input.patch || {}); return `Change ${(input.task_ids || []).length} tasks: ${Object.entries(p).map(([k, v]) => `${k} → ${v ?? 'cleared'}`).join(', ')}`; }
+  if (tool === 'delete_file') { const [f] = await resolveAttachments(rt, [input.id]); if (!f) throw new ToolError('No file with that id'); return `Delete file "${f.original_name || f.id}" permanently`; }
   if (tool === 'archive_record') { const E = entityDef(input.entity); const r = await resolve(rt, E.table, input.id, { label: E.label }); input.id = r.id; input.entity = E.table; return `${E.archive.kind === 'flag' ? 'Archive' : 'Remove'} ${E.label} "${r[E.nameCol] || r.id}"`; }
   return `${tool} ${JSON.stringify(input)}`;
 }
@@ -1359,7 +1542,7 @@ async function runTool(rt, name, input, { bypassConfirm = false } = {}) {
   }
 }
 
-const TOOL_VERB = { search_everything: 'Searching', get_today: 'Checking the plan', list_tasks: 'Listing tasks', get_calendar: 'Reading the calendar', find_open_time: 'Looking for free time', list_projects: 'Checking projects', get_project: 'Opening project', list_maintenance: 'Checking maintenance', list_plants: 'Checking plants', get_pet_history: 'Checking pet history', search_memory: 'Recalling', search_history: 'Searching history', get_weather: 'Checking the weather', create_task: 'Adding task', update_task: 'Updating task', complete_task: 'Completing', postpone_task: 'Postponing', delete_task: 'Proposing removal', create_event: 'Adding event', move_event: 'Moving event', create_work_block: 'Reserving time', set_day_mode: 'Replanning', replan_day: 'Replanning the day', replan_week: 'Replanning the week', update_project_step: 'Updating step', add_project_step: 'Adding step', add_project_cost: 'Adding cost', record_maintenance: 'Logging maintenance', log_plant_observation: 'Logging plant care', log_pet_activity: 'Logging activity', log_routine: 'Logging routine', add_list_item: 'Adding to list', create_note: 'Saving note', link: 'Linking', save_memory: 'Remembering', update_memory: 'Updating memory', forget_memory: 'Proposing to forget', bulk_update: 'Proposing bulk change', create_project: 'Creating project', update_project: 'Updating project', list_records: 'Looking up', create_record: 'Adding', update_record: 'Updating', archive_record: 'Proposing to archive', web_search: 'Searching the web', web_fetch: 'Reading page' };
+const TOOL_VERB = { search_everything: 'Searching', get_today: 'Checking the plan', list_tasks: 'Listing tasks', get_calendar: 'Reading the calendar', find_open_time: 'Looking for free time', list_projects: 'Checking projects', get_project: 'Opening project', list_maintenance: 'Checking maintenance', list_plants: 'Checking plants', get_pet_history: 'Checking pet history', search_memory: 'Recalling', search_history: 'Searching history', get_weather: 'Checking the weather', create_task: 'Adding task', update_task: 'Updating task', complete_task: 'Completing', postpone_task: 'Postponing', delete_task: 'Proposing removal', create_event: 'Adding event', move_event: 'Moving event', create_work_block: 'Reserving time', set_day_mode: 'Replanning', replan_day: 'Replanning the day', replan_week: 'Replanning the week', update_project_step: 'Updating step', add_project_step: 'Adding step', add_project_cost: 'Adding cost', record_maintenance: 'Logging maintenance', log_plant_observation: 'Logging plant care', log_pet_activity: 'Logging activity', log_routine: 'Logging routine', add_list_item: 'Adding to list', create_note: 'Saving note', link: 'Linking', save_memory: 'Remembering', update_memory: 'Updating memory', forget_memory: 'Proposing to forget', bulk_update: 'Proposing bulk change', create_project: 'Creating project', update_project: 'Updating project', list_records: 'Looking up', create_record: 'Adding', update_record: 'Updating', archive_record: 'Proposing to archive', web_search: 'Searching the web', web_fetch: 'Reading page', assign_task: 'Assigning', get_household_overview: 'Reading the whole house', get_person_context: 'Checking their lens', get_recent_changes: 'Checking what changed', get_file: 'Opening file', search_files: 'Searching files', link_file: 'Filing', unlink_file: 'Unlinking', update_file_metadata: 'Noting what it is', delete_file: 'Proposing file deletion' };
 function describeCall(name, input = {}) {
   const hint = ['title', 'name', 'q', 'text', 'content', 'item', 'id', 'task_id', 'rule_id', 'routine_id', 'plant_id', 'project_id', 'mode', 'date', 'to_date', 'entity'].map(k => input[k] ?? input.data?.[k]).find(v => typeof v === 'string' && v && !isUuid(v));
   return `${TOOL_VERB[name] || name.replace(/_/g, ' ')}${hint ? ` · ${String(hint).slice(0, 60)}` : ''}…`;
@@ -1549,18 +1732,29 @@ function sanitizeHistory(rows) {
 
 async function runChat(env, auth, body, message, send) {
   const context = body.context || {};
-  const rt = makeRuntime(env, { hh: auth.hh, userId: auth.userId, personId: auth.personId, actor: 'ai', emit: send });
+  // Who is speaking (spec §12.4): the device's active person, validated against this household; falls back to the login's person.
+  const requested = isUuid(String(body.active_person_id)) ? body.active_person_id : null;
+  const rt = makeRuntime(env, { hh: auth.hh, userId: auth.userId, personId: auth.personId, activePersonId: requested, actor: 'ai', emit: send });
   const db = rt.db;
+  if (requested) { const [p] = await db.select('people', { id: requested, select: 'id' }); if (!p) rt.activePersonId = auth.personId; }
+  if (body.active_person_id === null && 'active_person_id' in body) rt.activePersonId = null;        // shared / wall device: nobody in particular
+  context.active_person_id = rt.activePersonId;
   let thread = null;
   if (isUuid(String(body.thread_id))) [thread] = await db.select('ai_threads', { id: body.thread_id });
-  if (!thread) [thread] = await db.insert('ai_threads', { user_id: auth.userId, title: message.slice(0, 80) });
+  if (!thread) [thread] = await db.insert('ai_threads', { user_id: auth.userId, title: message.slice(0, 80), active_person_id: rt.activePersonId });
+  else if (thread.active_person_id !== rt.activePersonId) db.update('ai_threads', { id: thread.id }, { active_person_id: rt.activePersonId }).catch(() => {});
   await send('thread', { thread_id: thread.id });
 
-  const ctx = await rt.getCtx();
-  const [history, mem] = await Promise.all([
+  const ctx = await rt.getCtx(); ctx.activePersonId = rt.activePersonId;
+  const [history, mem, files] = await Promise.all([
     db.select('ai_messages', { thread_id: thread.id, select: 'role,content,text', order: 'created_at.desc', limit: HISTORY_TURNS }),
     retrieveMemories(ctx, message, context.view),
+    resolveAttachments(rt, body.attachment_ids),
   ]);
+  if (files.length) {   // every attachment belongs to this conversation too (spec §2)
+    db.upsert('file_links', files.map(f => ({ file_id: f.id, entity_type: 'ai_thread', entity_id: thread.id, rel: 'chat', created_by: auth.userId })), 'file_id,entity_type,entity_id,rel').catch(e => console.error('thread link', e.message));
+    db.update('files', { id: files.map(f => f.id) }, { processing_status: 'processing' }).catch(() => {});
+  }
   const plan = planDay(ctx.today, ctx);
   const attention = needsAttention(ctx);
   // Prompt cache: tools + SYSTEM_STATIC are byte-identical every turn → cached; the snapshot block changes.
@@ -1569,8 +1763,9 @@ async function runChat(env, auth, body, message, send) {
     { type: 'text', text: buildSystemPrompt({ ctx, plan, attention, memories: mem.memories, context }) },
   ];
   const messages = sanitizeHistory(history.reverse());
-  messages.push({ role: 'user', content: [{ type: 'text', text: message }] });
-  db.insert('ai_messages', { thread_id: thread.id, role: 'user', content: [{ type: 'text', text: message }], text: message }).catch(e => console.error('persist user', e.message));
+  const userContent = files.length ? await buildUserContent(env, message, files) : [{ type: 'text', text: message }];
+  messages.push({ role: 'user', content: userContent });
+  db.insert('ai_messages', { thread_id: thread.id, role: 'user', content: [{ type: 'text', text: message }], text: message, sender_person_id: rt.activePersonId, attachment_ids: files.map(f => f.id) }).catch(e => console.error('persist user', e.message));
 
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const toolCalls = [], texts = [], sources = [];
@@ -1607,6 +1802,7 @@ async function runChat(env, auth, body, message, send) {
   }
 
   const text = texts.join('\n').trim();
+  if (files.length) db.update('files', { id: files.map(f => f.id), processing_status: 'processing' }, { processing_status: 'complete' }).catch(() => {});
   const srcs = uniqBy(sources, s => s.url).slice(0, 8);
   if (srcs.length) await send('sources', { sources: srcs });
   await Promise.all([
@@ -1619,7 +1815,7 @@ async function runChat(env, auth, body, message, send) {
 
 async function handleChat(req, env, auth, cors, waitUntil) {
   const body = await req.json().catch(() => ({}));
-  const message = String(body.message || '').trim();
+  const message = String(body.message || body.text || '').trim() || (Array.isArray(body.attachment_ids) && body.attachment_ids.length ? '(I attached this — work out what it is and file it where it belongs; ask me one question if it is unclear.)' : '');
   if (!message) throw new HttpError(400, 'message is required');
   if (!env.ANTHROPIC_API_KEY) throw new HttpError(500, 'ANTHROPIC_API_KEY is not configured');
   const { response, send, close } = sseStream(cors);
