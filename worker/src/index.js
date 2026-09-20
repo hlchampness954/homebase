@@ -997,3 +997,562 @@ const TOOL_IMPL = {
     rt.dirty();
     return { observation: pick(o, ['id', 'plant_id', 'group_name', 'at', 'kind', 'soil_state', 'ph', 'ec', 'water_level', 'note']) };
   },
+
+
+  async log_pet_activity({ pet_id, kind, duration_min, focus, note, at }, rt) {
+    const pet = pet_id ? await resolve(rt, 'pets', pet_id, { label: 'pet' }) : (await rt.db.select('pets', { limit: 1 }))[0];
+    if (!pet) throw new ToolError('No pet found — add one first');
+    const atIso = at ? normalizeTs(at, rt.tz, rt.now) : nowIso();
+    const [a] = await rt.db.insert('pet_activities', { pet_id: pet.id, at: atIso, kind, duration_min: duration_min ?? null, focus: focus || null, note: note || null, by_person_id: rt.personId });
+    await rt.act({ entity_type: 'pet_activity', entity_id: a.id, action: 'log', after: a, summary: `Logged ${pet.name} ${kind}${focus ? ` (${focus})` : ''}${duration_min ? ` ${duration_min} min` : ''}` });
+    const out = { activity: pick(a, ['id', 'pet_id', 'at', 'kind', 'duration_min', 'focus', 'note']) };
+    if (kind === 'training') {                              // also counts as the pet's daily training routine
+      const r = (await rt.db.select('routines', { pet_id: pet.id, active: true, name: 'ilike.*train*', limit: 1 }))[0];
+      if (r && D.dateOf(r.last_done_at, rt.tz) !== D.dateOf(atIso, rt.tz)) {
+        out.routine_log = await coreLogRoutine(rt, r, { done_at: atIso, duration_min, detail: focus ? { focus } : null, note });
+        out.closed_tasks = await closeLinkedTasks(rt, 'routine_id', r.id, 'routine logged');
+      }
+    }
+    rt.dirty();
+    return out;
+  },
+
+  async log_routine({ routine_id, done_at, duration_min, detail, note }, rt) {
+    const r = await resolve(rt, 'routines', routine_id, { label: 'routine' });
+    const log = await coreLogRoutine(rt, r, { done_at, duration_min, detail, note });
+    const closed = await closeLinkedTasks(rt, 'routine_id', r.id, 'routine logged');
+    return { routine: { id: r.id, name: r.name, streak: log.streak }, log: pick(log, ['id', 'done_at', 'duration_min', 'detail', 'note']), closed_tasks: closed };
+  },
+
+  async add_list_item({ list_name_or_id, text, qty, project }, rt) {
+    if (!text) throw new ToolError('text is required');
+    let list = await resolve(rt, 'lists', list_name_or_id, { label: 'list', filter: { archived: false }, required: false });
+    if (!list) {
+      if (isUuid(String(list_name_or_id))) throw new ToolError('No list with that id');
+      [list] = await rt.db.insert('lists', { name: String(list_name_or_id).trim(), kind: /pack/i.test(list_name_or_id) ? 'packing' : 'shopping' });
+      await rt.act({ entity_type: 'list', entity_id: list.id, action: 'create', after: list, summary: `Created list "${list.name}"` });
+    }
+    const [item] = await rt.db.insert('list_items', { list_id: list.id, text: String(text).trim(), qty: qty || null, project_id: await resolveId(rt, 'projects', project, 'project') });
+    await rt.act({ entity_type: 'list_item', entity_id: item.id, action: 'create', after: item, summary: `Added "${item.text}"${qty ? ` ×${qty}` : ''} to ${list.name}` });
+    return { list: pick(list, ['id', 'name', 'kind']), item: pick(item, ['id', 'text', 'qty', 'done']) };
+  },
+
+  async create_note({ title, body, vendor, phone, url, area, project }, rt) {
+    if (!title) throw new ToolError('title is required');
+    const [n] = await rt.db.insert('notes', { title: String(title).trim(), body: body || null, vendor: !!vendor || !!phone, phone: phone || null, url: url || null, area_id: await resolveId(rt, 'areas', area, 'area'), project_id: await resolveId(rt, 'projects', project, 'project') });
+    await rt.act({ entity_type: 'note', entity_id: n.id, action: 'create', after: pick(n, ['id', 'title', 'vendor']), summary: `Saved note "${n.title}"` });
+    return { note: pick(n, ['id', 'title', 'body', 'vendor', 'phone', 'url', 'area_id', 'project_id']) };
+  },
+
+  async link({ from_type, from_id, to_type, to_id, rel }, rt) {
+    if (!isUuid(from_id) || !isUuid(to_id)) throw new ToolError('from_id and to_id must be uuids');
+    const [l] = await rt.db.upsert('links', { from_type, from_id, to_type, to_id, rel: rel || 'related' }, 'from_type,from_id,to_type,to_id,rel');
+    await rt.act({ entity_type: 'link', entity_id: l.id, action: 'create', after: l, summary: `Linked ${from_type} → ${to_type} (${l.rel})` });
+    return { link: l };
+  },
+
+  // ── write: memory ──
+  async save_memory({ subject, kind, content, confidence, entity_type, entity_id }, rt) {
+    if (!content || !subject || !kind) throw new ToolError('subject, kind and content are required');
+    const [dup] = await rt.db.select('memories', { content: `ilike.${likePattern(content)}`, status: 'active', limit: 1 });
+    if (dup) return { memory: slimMemory(dup), already_known: true };
+    const [m] = await rt.db.insert('memories', { subject, kind, content: String(content).trim(), source: 'stated', confidence: Math.min(1, Math.max(0, Number(confidence ?? 0.9))).toFixed(2), entity_type: entity_type || null, entity_id: isUuid(String(entity_id)) ? entity_id : null, last_confirmed_at: nowIso() });
+    await rt.act({ entity_type: 'memory', entity_id: m.id, action: 'create', after: slimMemory(m), summary: `Remembered: ${m.content}` });
+    rt.dirty();
+    return { memory: slimMemory(m), remembered: m.content };
+  },
+
+  async update_memory({ id, content, status, confidence }, rt) {
+    if (!isUuid(String(id))) throw new ToolError('id must be a memory uuid');
+    const [m] = await rt.db.select('memories', { id });
+    if (!m) throw new ToolError('No memory with that id');
+    const patch = {};
+    if (content) patch.content = String(content).trim();
+    if (status) { if (!['active', 'ignored'].includes(status)) throw new ToolError('status must be active | ignored'); patch.status = status; }
+    if (confidence != null) { patch.confidence = Math.min(1, Math.max(0, Number(confidence))).toFixed(2); if (Number(confidence) >= 1) patch.last_confirmed_at = nowIso(); }
+    if (!Object.keys(patch).length) throw new ToolError('nothing to change');
+    const [u] = await rt.db.update('memories', { id }, patch);
+    await rt.act({ entity_type: 'memory', entity_id: id, action: 'update', before: pick(m, Object.keys(patch)), after: patch, summary: status === 'ignored' ? `Ignoring memory: ${m.content}` : `Updated memory: ${u.content}` });
+    rt.dirty();
+    return { memory: slimMemory(u) };
+  },
+
+  async forget_memory({ id }, rt) {                          // executed only via /confirm
+    if (!isUuid(String(id))) throw new ToolError('id must be a memory uuid');
+    const [m] = await rt.db.select('memories', { id });
+    if (!m) throw new ToolError('No memory with that id');
+    await rt.db.update('memories', { id }, { status: 'rejected' });
+    await rt.act({ entity_type: 'memory', entity_id: id, action: 'delete', before: pick(m, ['status']), after: { status: 'rejected' }, summary: `Forgot: ${m.content}` });
+    rt.dirty();
+    return { forgotten: m.content };
+  },
+
+  async bulk_update({ task_ids, patch }, rt) {               // executed only via /confirm
+    const ids = (task_ids || []).filter(x => isUuid(String(x))).slice(0, 100);
+    if (!ids.length) throw new ToolError('task_ids must contain uuids');
+    const p = await normalizeTaskPatch(rt, patch || {});
+    if (!Object.keys(p).length) throw new ToolError('patch is empty');
+    const before = await rt.db.select('tasks', { id: ids });
+    const rows = await rt.db.update('tasks', { id: ids }, p);
+    await rt.act({ entity_type: 'task', entity_id: null, action: 'update', before: before.map(t => pick(t, ['id', ...Object.keys(p)])), after: { ids, patch: p }, reason: 'bulk', summary: `Updated ${rows.length} tasks (${Object.keys(p).join(', ')})`, undo: { op: 'bulk_update', table: 'tasks', rows: before.map(t => ({ id: t.id, patch: pick(t, Object.keys(p)) })) } });
+    rt.dirty();
+    return { updated: rows.length, tasks: rows.map(slimTask) };
+  },
+};
+
+// Reversal of a replan (plan §6.6): tasks moved by replan:* and untouched since go back to `before`
+async function restoreReplanned(rt, dates) {
+  const logs = await rt.db.select('activity_log', { entity_type: 'task', action: 'replan', reason: 'like.replan:*', order: 'at.desc', limit: 200 });
+  const wanted = logs.filter(l => l.before && l.after && (dates.includes(l.before.due_date) || dates.includes(D.dateOf(l.before.scheduled_start, rt.tz))));
+  const ids = uniqBy(wanted.map(l => l.entity_id).filter(Boolean), x => x);
+  if (!ids.length) return [];
+  const tasks = await rt.db.select('tasks', { id: ids, status: 'open' });
+  const restored = [];
+  for (const t of tasks) {
+    const log = wanted.find(l => l.entity_id === t.id);
+    if (Math.abs(+new Date(t.updated_at) - +new Date(log.at)) > 5000) continue;   // user touched it since
+    const patch = pick(log.before, ['due_date', 'scheduled_start', 'scheduled_end', 'original_date']);
+    await rt.db.update('tasks', { id: t.id }, patch);
+    await rt.act({ entity_type: 'task', entity_id: t.id, action: 'replan', before: pick(t, Object.keys(patch)), after: patch, reason: 'replan:normal', summary: `Restored "${t.title}" to ${patch.due_date || D.dateOf(patch.scheduled_start, rt.tz)}` });
+    restored.push(t.title);
+  }
+  rt.dirty();
+  return restored;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Proposals (confirm-required tools). KV when bound; otherwise an in-memory Map that
+// only survives within one Worker isolate — fine for a single household, documented in README.
+// ─────────────────────────────────────────────────────────────────────────────
+const proposalsMem = new Map();
+const sweepProposals = () => { const now = Date.now(); for (const [k, v] of proposalsMem) if (now - v.created > PROPOSAL_TTL_S * 1000) proposalsMem.delete(k); };
+
+async function storeProposal(env, p) {
+  const prop = { ...p, id: crypto.randomUUID(), created: Date.now() };
+  if (env.RATE) await env.RATE.put(`prop:${prop.id}`, JSON.stringify(prop), { expirationTtl: PROPOSAL_TTL_S });
+  else { sweepProposals(); proposalsMem.set(prop.id, prop); }
+  return prop;
+}
+async function loadProposal(env, id) {
+  if (!isUuid(String(id))) return null;
+  const p = env.RATE ? await env.RATE.get(`prop:${id}`, 'json') : proposalsMem.get(id);
+  return p && Date.now() - p.created <= PROPOSAL_TTL_S * 1000 ? p : null;
+}
+async function dropProposal(env, id) { if (env.RATE) await env.RATE.delete(`prop:${id}`).catch(() => {}); else proposalsMem.delete(id); }
+
+async function proposalSummary(rt, tool, input) {
+  if (tool === 'delete_task') { const t = await resolveTask(rt, input.id); input.id = t.id; return `Remove task "${t.title}"${t.due_date ? ` (due ${t.due_date})` : ''}`; }
+  if (tool === 'forget_memory') { const [m] = await rt.db.select('memories', { id: input.id }); if (!m) throw new ToolError('No memory with that id'); return `Forget: "${m.content}"`; }
+  if (tool === 'bulk_update') { const p = await normalizeTaskPatch(rt, input.patch || {}); return `Change ${(input.task_ids || []).length} tasks: ${Object.entries(p).map(([k, v]) => `${k} → ${v ?? 'cleared'}`).join(', ')}`; }
+  return `${tool} ${JSON.stringify(input)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool dispatch (never throws — the model gets {error})
+// ─────────────────────────────────────────────────────────────────────────────
+const truncate = (s, n = TOOL_RESULT_MAX_CHARS) => (s.length > n ? s.slice(0, n) + `…(truncated ${s.length - n} chars)` : s);
+
+async function runTool(rt, name, input, { bypassConfirm = false } = {}) {
+  const tool = TOOL_INDEX[name];
+  if (!tool || !TOOL_IMPL[name]) return { error: `Unknown tool ${name}` };
+  try {
+    if (tool.confirm && !bypassConfirm) {
+      const summary = await proposalSummary(rt, name, input);
+      const p = await storeProposal(rt.env, { hh: rt.hh, userId: rt.userId, personId: rt.personId, tool: name, input, summary });
+      const view = { id: p.id, summary, tool: name, input };
+      rt.proposals.push(view);
+      await rt.emit('proposal', view);
+      return { proposal_id: p.id, summary, status: 'awaiting_confirmation', note: 'Not executed. The user sees a confirm card; tell them in a few words what will happen once they confirm.' };
+    }
+    const out = await TOOL_IMPL[name](input || {}, rt);
+    return out === undefined ? { ok: true } : out;
+  } catch (e) {
+    if (!(e instanceof ToolError)) console.error(`tool ${name}`, e);
+    return { error: e.message || String(e), ...(e.candidates ? { candidates: e.candidates } : {}) };
+  }
+}
+
+const TOOL_VERB = { search_everything: 'Searching', get_today: 'Checking the plan', list_tasks: 'Listing tasks', get_calendar: 'Reading the calendar', find_open_time: 'Looking for free time', list_projects: 'Checking projects', get_project: 'Opening project', list_maintenance: 'Checking maintenance', list_plants: 'Checking plants', get_pet_history: 'Checking pet history', search_memory: 'Recalling', search_history: 'Searching history', get_weather: 'Checking the weather', create_task: 'Adding task', update_task: 'Updating task', complete_task: 'Completing', postpone_task: 'Postponing', delete_task: 'Proposing removal', create_event: 'Adding event', move_event: 'Moving event', create_work_block: 'Reserving time', set_day_mode: 'Replanning', replan_day: 'Replanning the day', replan_week: 'Replanning the week', update_project_step: 'Updating step', add_project_step: 'Adding step', add_project_cost: 'Adding cost', record_maintenance: 'Logging maintenance', log_plant_observation: 'Logging plant care', log_pet_activity: 'Logging activity', log_routine: 'Logging routine', add_list_item: 'Adding to list', create_note: 'Saving note', link: 'Linking', save_memory: 'Remembering', update_memory: 'Updating memory', forget_memory: 'Proposing to forget', bulk_update: 'Proposing bulk change' };
+function describeCall(name, input = {}) {
+  const hint = ['title', 'q', 'text', 'content', 'item', 'id', 'task_id', 'rule_id', 'routine_id', 'plant_id', 'project_id', 'mode', 'date', 'to_date'].map(k => input[k]).find(v => typeof v === 'string' && v && !isUuid(v));
+  return `${TOOL_VERB[name] || name.replace(/_/g, ' ')}${hint ? ` · ${String(hint).slice(0, 60)}` : ''}…`;
+}
+function describeResult(name, r = {}) {
+  if (r.summary) return r.summary;
+  if (r.remembered) return `Remembered: ${r.remembered}`;
+  if (r.task?.title) return `"${r.task.title}"${r.next ? ` · next ${r.next.due_date || r.next.window_start}` : ''}`;
+  if (r.event?.title) return `"${r.event.title}"`;
+  if (Array.isArray(r.tasks)) return `${r.tasks.length} tasks`;
+  if (Array.isArray(r.slots)) return `${r.slots.length} open slots`;
+  if (r.next_due) return `next due ${r.next_due}`;
+  return 'Done';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anthropic SSE parsing (pure; exported for tests)
+// ─────────────────────────────────────────────────────────────────────────────
+export function parseSSE(buffer) {
+  const events = [];
+  const norm = buffer.replace(/\r\n/g, '\n');
+  const parts = norm.split('\n\n');
+  const rest = parts.pop();
+  for (const frame of parts) {
+    let event = 'message'; const data = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+    }
+    if (!data.length) continue;
+    const raw = data.join('\n');
+    let parsed; try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    events.push({ event, data: parsed });
+  }
+  return { events, rest };
+}
+
+export function createMessageAssembler() {
+  const message = { id: null, model: null, role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } };
+  const partial = {};
+  return {
+    message,
+    handle(ev) {
+      const d = ev && ev.data;
+      if (!d || typeof d !== 'object') return null;
+      switch (d.type) {
+        case 'message_start':
+          Object.assign(message, pick(d.message || {}, ['id', 'model']));
+          message.usage.input_tokens = d.message?.usage?.input_tokens || 0;
+          message.usage.output_tokens = d.message?.usage?.output_tokens || 0;
+          return null;
+        case 'content_block_start': {
+          const b = { ...d.content_block };
+          if (b.type === 'text') b.text = b.text || '';
+          if (b.type === 'tool_use') { b.input = b.input && Object.keys(b.input).length ? b.input : {}; partial[d.index] = ''; }
+          message.content[d.index] = b;
+          return null;
+        }
+        case 'content_block_delta': {
+          const b = message.content[d.index]; if (!b) return null;
+          if (d.delta?.type === 'text_delta') { b.text += d.delta.text; return { text: d.delta.text }; }
+          if (d.delta?.type === 'input_json_delta') { partial[d.index] = (partial[d.index] || '') + d.delta.partial_json; }
+          return null;
+        }
+        case 'content_block_stop': {
+          const b = message.content[d.index];
+          if (b?.type === 'tool_use' && partial[d.index] != null) {
+            const raw = partial[d.index].trim();
+            if (raw) { try { b.input = JSON.parse(raw); } catch { b.input = { _unparsed: raw }; } }
+            delete partial[d.index];
+          }
+          return null;
+        }
+        case 'message_delta':
+          if (d.delta?.stop_reason) message.stop_reason = d.delta.stop_reason;
+          if (d.usage?.output_tokens != null) message.usage.output_tokens = d.usage.output_tokens;
+          if (d.usage?.input_tokens != null) message.usage.input_tokens = d.usage.input_tokens;
+          return null;
+        case 'error':
+          throw new Error(`Anthropic stream error: ${d.error?.message || JSON.stringify(d)}`);
+        default:
+          return null;
+      }
+    },
+  };
+}
+
+export function parseAnthropicSSE(text) {
+  const asm = createMessageAssembler();
+  const { events } = parseSSE(String(text).replace(/\r\n/g, '\n') + '\n\n');
+  for (const ev of events) asm.handle(ev);
+  message_cleanup(asm.message);
+  return asm.message;
+}
+function message_cleanup(m) { m.content = m.content.filter(Boolean); }
+
+async function streamAnthropic(env, payload, onText) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01', 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify({ ...payload, stream: true }),
+    signal: timeoutSignal(120000),
+  });
+  if (!res.ok) { const t = await res.text(); throw new HttpError(502, `Anthropic ${res.status}: ${t.slice(0, 400)}`); }
+  const asm = createMessageAssembler();
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  const pump = async (chunk) => { buf += chunk; const { events, rest } = parseSSE(buf); buf = rest; for (const ev of events) { const out = asm.handle(ev); if (out?.text) await onText(out.text); } };
+  for (;;) { const { done, value } = await reader.read(); if (done) break; await pump(dec.decode(value, { stream: true })); }
+  await pump(dec.decode() + '\n\n');
+  message_cleanup(asm.message);
+  return asm.message;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /chat — the tool-use loop (plan §7.2), streamed as SSE
+// ─────────────────────────────────────────────────────────────────────────────
+function sanitizeHistory(rows) {
+  const out = [];
+  for (const r of rows) {
+    if (r.role !== 'user' && r.role !== 'assistant') continue;
+    const blocks = (Array.isArray(r.content) ? r.content : [{ type: 'text', text: String(r.text || '') }]).filter(b => b?.type === 'text' && b.text && b.text.trim());
+    if (!blocks.length) continue;
+    const last = out[out.length - 1];
+    if (last && last.role === r.role) last.content.push(...blocks); else out.push({ role: r.role, content: blocks });
+  }
+  while (out.length && out[0].role !== 'user') out.shift();
+  if (out.length && out[out.length - 1].role === 'user') out.pop();          // the new user turn follows
+  return out;
+}
+
+async function runChat(env, auth, body, message, send) {
+  const context = body.context || {};
+  const rt = makeRuntime(env, { hh: auth.hh, userId: auth.userId, personId: auth.personId, actor: 'ai', emit: send });
+  const db = rt.db;
+  let thread = null;
+  if (isUuid(String(body.thread_id))) [thread] = await db.select('ai_threads', { id: body.thread_id });
+  if (!thread) [thread] = await db.insert('ai_threads', { user_id: auth.userId, title: message.slice(0, 80) });
+  await send('thread', { thread_id: thread.id });
+
+  const ctx = await rt.getCtx();
+  const [history, mem] = await Promise.all([
+    db.select('ai_messages', { thread_id: thread.id, select: 'role,content,text', order: 'created_at.desc', limit: HISTORY_TURNS }),
+    retrieveMemories(ctx, message, context.view),
+  ]);
+  const plan = planDay(ctx.today, ctx);
+  const attention = needsAttention(ctx);
+  const system = buildSystemPrompt({ ctx, plan, attention, memories: mem.memories, context });
+  const messages = sanitizeHistory(history.reverse());
+  messages.push({ role: 'user', content: [{ type: 'text', text: message }] });
+  db.insert('ai_messages', { thread_id: thread.id, role: 'user', content: [{ type: 'text', text: message }], text: message }).catch(e => console.error('persist user', e.message));
+
+  const usage = { input_tokens: 0, output_tokens: 0 };
+  const toolCalls = [], texts = [];
+  let finished = false;
+  for (let i = 0; i < MAX_ITER; i++) {
+    const msg = await streamAnthropic(env, { model: env.MODEL, system, messages, tools: TOOL_SCHEMAS, max_tokens: MAX_TOKENS }, delta => send('text', { delta }));
+    usage.input_tokens += msg.usage.input_tokens || 0; usage.output_tokens += msg.usage.output_tokens || 0;
+    for (const b of msg.content) if (b.type === 'text' && b.text) texts.push(b.text);
+    const uses = msg.content.filter(b => b.type === 'tool_use');
+    if (msg.stop_reason !== 'tool_use' || !uses.length) { finished = true; break; }
+    messages.push({ role: 'assistant', content: msg.content });
+    const results = [];
+    for (const u of uses) {
+      await send('tool', { name: u.name, status: 'start', summary: describeCall(u.name, u.input) });
+      const result = await runTool(rt, u.name, u.input || {});
+      toolCalls.push({ name: u.name, input: u.input, ok: !result?.error, error: result?.error || null });
+      await send('tool', { name: u.name, status: 'done', summary: result?.error ? `Couldn't: ${result.error}` : describeResult(u.name, result) });
+      results.push({ type: 'tool_result', tool_use_id: u.id, content: truncate(JSON.stringify(result)), ...(result?.error ? { is_error: true } : {}) });
+    }
+    messages.push({ role: 'user', content: results });
+  }
+  if (!finished) { const t = 'I did what I could in this turn — the actions above went through; ask me to continue if something is still missing.'; texts.push(t); await send('text', { delta: t }); }
+
+  const text = texts.join('\n').trim();
+  await Promise.all([
+    db.insert('ai_messages', { thread_id: thread.id, role: 'assistant', content: text ? [{ type: 'text', text }] : [], text, tool_calls: toolCalls, actions: rt.actions, tokens_in: usage.input_tokens, tokens_out: usage.output_tokens }).catch(e => console.error('persist assistant', e.message)),
+    db.update('ai_threads', { id: thread.id }, { updated_at: nowIso() }).catch(() => {}),
+    mem.stamp,
+  ]);
+  await send('done', { thread_id: thread.id, usage, actions: rt.actions, proposals: rt.proposals.map(p => pick(p, ['id', 'summary', 'tool'])) });
+}
+
+async function handleChat(req, env, auth, cors, waitUntil) {
+  const body = await req.json().catch(() => ({}));
+  const message = String(body.message || '').trim();
+  if (!message) throw new HttpError(400, 'message is required');
+  if (!env.ANTHROPIC_API_KEY) throw new HttpError(500, 'ANTHROPIC_API_KEY is not configured');
+  const { response, send, close } = sseStream(cors);
+  const work = runChat(env, auth, body, message, send)
+    .catch(e => { console.error('chat', e); return send('error', { message: e.message || String(e) }); })
+    .finally(close);
+  waitUntil(work);
+  return response;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /confirm · POST /plan · POST /learn
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleConfirm(req, env, auth) {
+  const body = await req.json().catch(() => ({}));
+  const p = await loadProposal(env, body.proposal_id);
+  if (!p || p.hh !== auth.hh) throw new HttpError(404, 'Proposal not found or expired (10 min)');
+  const rt = makeRuntime(env, { hh: auth.hh, userId: auth.userId, personId: auth.personId, actor: 'ai' });
+  await rt.getCtx();
+  const result = await runTool(rt, p.tool, p.input, { bypassConfirm: true });
+  await dropProposal(env, p.id);
+  if (result?.error) throw new HttpError(400, result.error);
+  return { ok: true, proposal_id: p.id, tool: p.tool, action: rt.actions[0] || null, actions: rt.actions, result };
+}
+
+// Undo an action emitted by /chat: body is the `undo` descriptor ({op, table, id, patch?, also?}).
+// Household-scoped by makeDb(env, hh); only whitelisted tables.
+const UNDO_TABLES = new Set(Object.values(TABLE_OF).filter(t => t !== 'households'));
+async function handleUndo(req, env, auth) {
+  const body = await req.json().catch(() => ({}));
+  const db = makeDb(env, auth.hh);
+  const steps = [body, body.also].filter(Boolean);
+  const done = [];
+  for (const u of steps) {
+    if (!u || !UNDO_TABLES.has(u.table) || !u.id) throw new HttpError(400, 'Bad undo descriptor');
+    if (u.op === 'delete') await db.del(u.table, { id: u.id });
+    else if (u.op === 'update' && u.patch && typeof u.patch === 'object') await db.update(u.table, { id: u.id }, u.patch);
+    else throw new HttpError(400, 'Bad undo op');
+    done.push(`${u.op} ${u.table}`);
+  }
+  try { await db.insert('activity_log', { actor: auth.personId || 'user', entity_type: body.table.replace(/s$/, ''), entity_id: body.id, action: 'undo', after: body, reason: 'undo ai action' }); } catch {}
+  return { ok: true, done };
+}
+
+async function handlePlan(req, env, auth) {
+  const body = await req.json().catch(() => ({}));
+  const rt = makeRuntime(env, { hh: auth.hh, userId: auth.userId, personId: auth.personId, actor: 'ai' });
+  const ctx = await rt.getCtx();
+  const date = isDate(body.date) ? body.date : ctx.today;
+  const plan = await schedulePlan(rt, date, { reason: 'plan' });
+  return { ...plan, needs_attention: date === ctx.today ? needsAttention(ctx) : [], actions: rt.actions.length };
+}
+
+async function runPlanForHousehold(env, hh) {
+  const rt = makeRuntime(env, { hh, actor: 'system' });
+  const ctx = await rt.getCtx();
+  const plan = await schedulePlan(rt, ctx.today, { reason: 'plan' });
+  return { hh, date: plan.date, scheduled: plan.scheduled.length, must: plan.must.length, planned: plan.planned.length };
+}
+
+// Nightly pattern job (plan §4.2). Observed memories are upserted by (entity_type, entity_id, kind).
+async function upsertMemory(db, m) {
+  const conf = Number(Math.min(1, Math.max(0, m.confidence || 0.5)).toFixed(2));
+  const [existing] = await db.select('memories', { entity_type: m.entity_type, entity_id: m.entity_id, kind: m.kind, status: 'neq.rejected', limit: 1 });
+  if (existing) { await db.update('memories', { id: existing.id }, { content: m.content, confidence: conf, evidence_count: m.evidence_count, data: m.data, subject: m.subject, source: 'observed' }); return 'updated'; }
+  await db.insert('memories', { ...m, confidence: conf, source: 'observed', status: 'active' });
+  return 'created';
+}
+
+export async function runLearn(env, hh) {
+  const db = makeDb(env, hh);
+  const [house] = await db.select('households', { select: 'id,name,tz,settings' });
+  if (!house) throw new HttpError(404, 'Household not found');
+  const tz = house.tz || DEFAULT_TZ, today = D.todayIn(tz);
+  const sinceIso = D.toISO(D.addDays(today, -120), '00:00', tz);
+  const [done, rlogs, mlogs, waters, routines, rules, plants] = await Promise.all([
+    db.select('tasks', { status: 'done', completed_at: `gte.${sinceIso}`, select: 'id,title,series_id,routine_id,completed_at,actual_min,duration_min,postponed', order: 'completed_at.desc', limit: 2000 }),
+    db.select('routine_log', { done_at: `gte.${sinceIso}`, select: 'routine_id,done_at,duration_min', order: 'done_at.desc', limit: 2000 }),
+    db.select('maintenance_log', { select: 'rule_id,done_at', order: 'done_at.asc', limit: 1000 }),
+    db.select('plant_observations', { kind: 'in.(water,topoff)', select: 'plant_id,group_name,at', order: 'at.asc', limit: 2000 }),
+    db.select('routines', {}), db.select('maintenance_rules', {}), db.select('plants', { archived: false }),
+  ]);
+  const summary = { household: hh, name: house.name, usual_day: 0, duration: 0, postpone: 0, weekend_capacity: null, maintenance: 0, plants: 0, memories: [] };
+  const remember = async m => { const r = await upsertMemory(db, m); summary.memories.push(`${r}: ${m.content}`); };
+
+  // group completions by task series / routine
+  const groups = new Map();
+  const add = (type, id, title, e) => { if (!id) return; const k = `${type}:${id}`; if (!groups.has(k)) groups.set(k, { type, id, title, entries: [] }); groups.get(k).entries.push(e); };
+  const rname = id => routines.find(r => r.id === id)?.name || 'Routine';
+  for (const t of done) {
+    const e = { date: D.dateOf(t.completed_at, tz), actual: t.actual_min, est: t.duration_min, postponed: t.postponed || 0 };
+    if (t.series_id) add('task_series', t.series_id, t.title, e);
+    else if (t.routine_id) add('routine', t.routine_id, rname(t.routine_id), e);
+  }
+  for (const l of rlogs) add('routine', l.routine_id, rname(l.routine_id), { date: D.dateOf(l.done_at, tz), actual: l.duration_min, est: routines.find(r => r.id === l.routine_id)?.default_min, postponed: 0 });
+
+  for (const g of groups.values()) {
+    const recent = uniqBy(g.entries.sort((a, b) => D.cmp(b.date, a.date)), e => e.date + (e.actual ?? '')).slice(0, 12);
+    const n = recent.length;
+    const hist = {}; for (const e of recent) hist[D.dow(e.date)] = (hist[D.dow(e.date)] || 0) + 1;
+    const [best, count] = Object.entries(hist).sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    const share = n ? count / n : 0;
+    const parts = [], data = {}; let conf = 0;
+    if (n >= 4 && share >= 0.6) { data.usual_day = best; conf = share; parts.push(`${g.title} usually happens on ${D.dayName(recent.find(e => D.dow(e.date) === best).date)}s.`); summary.usual_day++; }
+    if (g.type === 'task_series' && n >= 4) {
+      const rate = recent.reduce((a, e) => a + (e.postponed > 0 ? 1 : 0), 0) / n;
+      if (rate >= 0.5) { data.postpone_rate = Number(rate.toFixed(2)); conf = Math.max(conf, 0.7); parts.push(`${g.title} tends to get postponed (${Math.round(rate * 100)}% of recent instances).`); summary.postpone++; }
+    }
+    if (parts.length) await remember({ entity_type: g.type, entity_id: g.id, kind: 'pattern', subject: 'scheduling', content: parts.join(' '), confidence: conf, evidence_count: n, data });
+    const actuals = recent.map(e => e.actual).filter(v => Number.isFinite(v) && v > 0);
+    const est = recent.find(e => e.est)?.est;
+    if (actuals.length >= 3 && est) {
+      const med = trimmedMedian(actuals);
+      if (Math.abs(med - est) / est > 0.25) {
+        const rounded = Math.round(med);
+        await remember({ entity_type: g.type, entity_id: g.id, kind: 'stat', subject: 'scheduling', content: `${g.title} really takes about ${rounded} minutes (the estimate was ${est}).`, confidence: 0.8, evidence_count: actuals.length, data: { median_min: rounded, estimate_min: est } });
+        if (g.type === 'task_series') await db.update('tasks', { series_id: g.id, status: 'open' }, { duration_min: rounded }).catch(() => {});
+        else await db.update('routines', { id: g.id }, { default_min: rounded }).catch(() => {});
+        summary.duration++;
+      }
+    }
+  }
+
+  // weekend capacity: minutes actually completed per Sat/Sun over the last 6 weekends
+  const perDay = {};
+  for (const t of done) { const d = D.dateOf(t.completed_at, tz); perDay[d] = (perDay[d] || 0) + (t.actual_min || t.duration_min || 30); }
+  for (const l of rlogs) { const d = D.dateOf(l.done_at, tz); perDay[d] = (perDay[d] || 0) + (l.duration_min || 0); }
+  const weekendDays = dateRange(D.addDays(today, -42), D.addDays(today, -1), 42).filter(D.isWeekend);
+  const values = weekendDays.map(d => perDay[d] || 0).filter(v => v > 0);
+  if (values.length) {
+    const med = Math.round(median(values));
+    const settings = { ...(house.settings || {}), learned_weekend_capacity: { minutes: med, n: values.length, updated: today } };
+    await db.update('households', { id: hh }, { settings });
+    await remember({ entity_type: 'household', entity_id: hh, kind: 'stat', subject: 'scheduling', content: `On weekend days about ${med} minutes of tasks actually get done (median of the last ${values.length} active weekend days).`, confidence: values.length >= 6 ? 0.8 : 0.5, evidence_count: values.length, data: { weekend_capacity_min: med } });
+    summary.weekend_capacity = { minutes: med, n: values.length };
+  }
+
+  // real maintenance intervals (memory only; needs confirmation)
+  const byRule = {}; for (const l of mlogs) if (l.rule_id) (byRule[l.rule_id] ||= []).push(l.done_at);
+  for (const [ruleId, dates] of Object.entries(byRule)) {
+    const ds = uniqBy(dates.sort(), x => x);
+    const gaps = ds.slice(1).map((d, i) => D.diffDays(ds[i], d)).filter(g => g > 0);
+    const rule = rules.find(r => r.id === ruleId);
+    if (gaps.length < 2 || !rule) continue;
+    const med = Math.round(median(gaps));
+    await remember({ entity_type: 'maintenance_rule', entity_id: ruleId, kind: 'stat', subject: 'home', content: `${rule.name} has actually been done about every ${med} days (the rule says ${rule.interval_days}). Confirm to change the interval.`, confidence: 0.6, evidence_count: gaps.length, data: { interval_days: med, current_interval_days: rule.interval_days, needs_confirmation: true } });
+    summary.maintenance++;
+  }
+
+  // plant watering intervals → plants.water_interval_days + memory
+  for (const p of plants) {
+    const mine = waters.filter(o => o.plant_id === p.id || (o.group_name && o.group_name === p.group_name));
+    const ds = uniqBy(mine.map(o => D.dateOf(o.at, tz)).sort(), x => x);
+    const gaps = ds.slice(1).map((d, i) => D.diffDays(ds[i], d)).filter(g => g > 0);
+    if (gaps.length < 3) continue;
+    const med = Math.round(median(gaps));
+    if (p.water_interval_days !== med) await db.update('plants', { id: p.id }, { water_interval_days: med });
+    await remember({ entity_type: 'plant', entity_id: p.id, kind: 'stat', subject: 'plants', content: `${p.name} gets watered about every ${med} days.`, confidence: Math.min(0.9, 0.5 + gaps.length * 0.05), evidence_count: gaps.length, data: { water_interval_days: med } });
+    summary.plants++;
+  }
+  return summary;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cron + router
+// ─────────────────────────────────────────────────────────────────────────────
+async function runCron(env, cron) {
+  const households = await makeDb(env).select('households', { select: 'id,name' });
+  const job = cron === '30 4 * * *' ? 'learn' : 'plan';
+  const results = await Promise.allSettled(households.map(h => (job === 'learn' ? runLearn(env, h.id) : runPlanForHousehold(env, h.id))));
+  results.forEach((r, i) => { if (r.status === 'rejected') console.error(`cron ${job} ${households[i].id}:`, r.reason?.message || r.reason); });
+  console.log(`cron ${job}: ${results.filter(r => r.status === 'fulfilled').length}/${households.length} households ok`);
+}
+
+export default {
+  async fetch(req, env, ctx) {
+    const cors = corsHeaders(req, env);
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    const path = new URL(req.url).pathname.replace(/\/+$/, '') || '/';
+    try {
+      if (req.method === 'GET' && (path === '/health' || path === '/')) return json({ ok: true, model: env.MODEL || null, time: nowIso() }, 200, cors);
+      if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+      if (!['/chat', '/confirm', '/undo', '/plan', '/learn'].includes(path)) throw new HttpError(404, 'Not found');
+      const auth = await authenticate(req, env);
+      await rateLimit(env, auth.userId);
+      if (path === '/chat') return await handleChat(req, env, auth, cors, p => ctx.waitUntil(p));
+      if (path === '/confirm') return json(await handleConfirm(req, env, auth), 200, cors);
+      if (path === '/undo') return json(await handleUndo(req, env, auth), 200, cors);
+      if (path === '/plan') return json(await handlePlan(req, env, auth), 200, cors);
+      return json(await runLearn(env, auth.hh), 200, cors);
+    } catch (e) {
+      const status = e.status || 500;
+      if (status >= 500) console.error(e);
+      return json({ error: e.message || 'Internal error' }, status, cors);
+    }
+  },
+  async scheduled(event, env, ctx) { ctx.waitUntil(runCron(env, event.cron)); },
+};
