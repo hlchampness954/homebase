@@ -1,35 +1,30 @@
 # HomeBase v2 — status
 
-_Updated Sep 19, 2026_
+_Updated Sep 20, 2026 (overnight build)_
 
-## Where things are
+## Live right now
 
-- **Phase 1 is now committed to `main`** in `hlchampness954/homebase`. GitHub Pages should use the v2 root `index.html`.
-- The previous v17 app is preserved at `docs/index.v17.html`.
-- The repository now contains the split source files, shared planner/recurrence logic, PWA assets, Supabase migrations, and AI Worker source/tests.
-
-## Phase 1 — built, verified in demo mode at 390×844, 820×1180, 1180×820, 1366×768
-
-| Area | State |
+| Piece | State |
 |---|---|
-| GitHub repository | **pushed to `main` and verified** |
-| `supabase/migrations/001–003` | written; **not yet run** against Luke's project |
-| `worker/` | written; smoke tests pass; mocked end-to-end run of all 38 tools; **not yet deployed** |
-| `index.html` app | Today, Tasks, Home, Projects, Calendar, Settings + What HomeBase Knows, Ask bar + AI panel (SSE), Wall (`?wall=1`), PWA; demo mode (`?demo=1`) |
-| Real-data test | pending — needs migrations run + Worker deployed + Luke's sign-in |
+| App | `https://hlchampness954.github.io/homebase/` — build 2.1.0-p2, SW `hb-v2-p2b` |
+| Database | Supabase `whcybmydykhicergqokx`, migrations **001–005 applied**; Email auth on; Site URL set |
+| Worker | `homebase-proxy.hlchampness.workers.dev`, auto-deployed by Cloudflare Workers Builds from `main` (root `worker/`) |
+| Secrets | 4 Worker secrets set by Luke (Anthropic key, Supabase URL, publishable key, secret key) |
+| Account | Luke signed up + household created (seeded: Ruby, Nursery, Patio, routines, rules, memories) |
 
-## Next steps (in order)
+## Done overnight (Sep 19 → 20)
 
-1. Run the three migrations in the Supabase SQL editor; enable Email auth.
-2. Deploy the Worker: `cd worker && wrangler login && wrangler secret put ANTHROPIC_API_KEY / SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY && wrangler deploy`.
-3. Open the HomeBase site, sign up, **Create household**, and paste the Worker URL under Settings → App & connections.
-4. Run the acceptance checks from the build plan §10: "I changed the HVAC filter", "what do I need to do today?", date rollover after 7 pm, and Hayley joins by invite code.
-5. After the real-data acceptance run, continue with Phase 2 items below.
+- **AI reliability**: fixed the `thinking block must contain signature` 400 (Sonnet 5 thinking blocks now round-trip), added retries/backoff on 429/529, friendly error text, prompt caching (tools + static rules), `max_tokens` 4096, 12 tool iterations.
+- **Web research**: Anthropic server-side `web_search` + `web_fetch` with New Braunfels location; sources shown under replies.
+- **Full app control**: `create_project` (steps + costs in one call), `update_project`, generic `list_records / create_record / update_record / archive_record` over every table (archive needs confirmation).
+- **Attachments (spec §1–10)**: paperclip / camera / files / drag-drop / paste in Ask HomeBase; private bucket upload with a client-side JPEG derivative; `files` extended + `file_links` (many-to-many); Worker resolver feeds images/PDFs/text to the model; tools `get_file / search_files / link_file / unlink_file / update_file_metadata / delete_file` (confirm); files card on project pages; Recent files on Home.
+- **Person lens (spec §11–13)**: "View as" pill (Luke / Hayley / Household) with task scope Mine / Household / All; per-device default (`household_devices`); `task_assignments` synced with `assignee_id` by trigger; person-scoped memories; AI knows who is speaking ("remind me" = that person), `assign_task`, `get_person_context`, `get_household_overview`, `get_recent_changes`.
+- **Chat rendering**: headings, lists, tables, links, code, sources; attachment chips.
+- **Sign-in**: email is kept after a failed attempt; clearer Create-account guidance.
+- CI workflow file written (`.github/workflows/verify-homebase.yml`) but **not committed** — GitHub's web editor refused workflow files; add it from a normal git push when convenient.
 
-## Known gaps / Phase 2 candidates
+## Next
 
-- Weekly Reset view and web push not built yet (Phase 2 per plan).
-- Offline write queue not built (reads work offline via service worker cache; writes need a connection).
-- Wall PIN is a display lock only (by design).
-- Custom recurrence picker uses two `prompt()` dialogs — replace with a proper sheet.
-- Photos/Storage uploads (Phase 3).
+1. Luke: reload the app on each device (PWA updates on second open), pick the device's person under the pill → "This device…".
+2. Acceptance run: receipt photo → Patio cost; rosemary photo question; "what's going on with the house?"; "give Hayley the crib sheets task"; research + `create_project`.
+3. Phase 2 leftovers: Weekly Reset view, web push, offline write queue, proper recurrence picker, Hayley's device set-up.
