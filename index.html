@@ -998,3 +998,1251 @@ async function loadWeather() {
   try {
     const cached = JSON.parse(localStorage.getItem('hb_wx') || 'null');
     if (cached && Date.now() - cached.at < 3600e3 && cached.today === S.today()) { S.weather = cached.data; return; }
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${w.lat}&longitude=${w.lon}&daily=precipitation_probability_max,precipitation_sum,temperature_2m_max&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=${encodeURIComponent(S.tz)}&forecast_days=7`);
+    const j = await r.json(); const out = {};
+    (j.daily?.time || []).forEach((d, i) => out[d] = { rain_prob: j.daily.precipitation_probability_max[i] ?? 0, precip_in: j.daily.precipitation_sum[i] ?? 0, tmax_f: Math.round(j.daily.temperature_2m_max[i]) });
+    S.weather = out; localStorage.setItem('hb_wx', JSON.stringify({ at: Date.now(), today: S.today(), data: out })); emit('weather');
+  } catch (e) { console.warn('weather', e); }
+}
+
+// ─── SHEETS / PICKERS ──────────────────────────────────────────────────────
+let sheetState = null;
+function openSheet({ title, build, onSave, saveLabel = 'Save', leftLabel = 'Cancel', onLeft, foot }) {
+  const sh = $('#sheet'); $('#sheet-title').textContent = title;
+  const body = $('#sheet-body'); body.innerHTML = ''; body.scrollTop = 0;
+  const right = $('#sheet-right'), left = $('#sheet-left');
+  right.textContent = saveLabel; right.classList.toggle('hidden', !onSave); left.textContent = leftLabel;
+  const ft = $('#sheet-foot'); ft.innerHTML = ''; ft.classList.toggle('hidden', !foot); if (foot) foot(ft);
+  sheetState = { onSave, onLeft };
+  build(body);
+  sh.classList.add('open'); sh.setAttribute('aria-hidden', 'false');
+  setTimeout(() => { const f = body.querySelector('[autofocus]'); if (f && !isPhone()) f.focus(); }, 250);
+}
+function closeSheet() { const sh = $('#sheet'); sh.classList.remove('open'); sh.setAttribute('aria-hidden', 'true'); sheetState = null; }
+$('#sheet-left').onclick = () => { if (sheetState?.onLeft) sheetState.onLeft(); else closeSheet(); };
+$('#sheet-right').onclick = async () => { if (!sheetState?.onSave) return; try { const ok = await sheetState.onSave(); if (ok !== false) closeSheet(); } catch (e) { console.error(e); toast(e.message || 'Something went wrong'); } };
+$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+function pickOne(title, options, value) {
+  return new Promise(res => {
+    const pk = $('#picker'); $('#picker-title').textContent = title;
+    const body = $('#picker-body'); body.innerHTML = '';
+    let cur = value;
+    const close = v => { pk.classList.remove('open'); res(v); };
+    for (const o of options) {
+      const it = h('div', { class: 'picker-item' + (o.value === cur ? ' sel' : '') }, h('div', { class: 'check' + (o.value === cur ? ' on' : '') }, svgCheck()), h('div', { style: 'flex:1' }, h('div', {}, o.label), o.sub ? h('div', { class: 'faint', style: 'font-size:12px' }, o.sub) : null));
+      it.onclick = () => close(o.value);
+      body.append(it);
+    }
+    $('#picker-done').onclick = () => close(cur);
+    pk.onclick = e => { if (e.target === pk) close(cur); };
+    pk.classList.add('open');
+  });
+}
+// a labelled row inside a sheet
+function srow(icon, label, valueEl, onclick) {
+  const r = h('div', { class: 'srow' }, h('span', { class: 'ic' }, icon), h('span', { class: 'lb' }, label), valueEl);
+  if (onclick) r.onclick = e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return; onclick(); };
+  return r;
+}
+function vtext(txt) { return h('span', { class: 'vl' }, txt); }
+function confirmSheet(title, text, { danger = 'Delete' } = {}) {
+  return new Promise(res => openSheet({ title, build: b => b.append(h('p', { class: 'muted', style: 'font-size:15px' }, text)), onSave: () => { res(true); }, saveLabel: danger, onLeft: () => { closeSheet(); res(false); } }));
+}
+
+// ─── SHELL / ROUTER ────────────────────────────────────────────────────────
+const VIEWS = { today: 'Today', tasks: 'Tasks', home: 'Home', projects: 'Projects', calendar: 'Calendar', settings: 'Settings' };
+let view = 'today';
+const renderers = {};
+function nav(v, params) {
+  view = v;
+  $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.nav === v));
+  $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + v));
+  $('#title').textContent = VIEWS[v]; $('#subtitle').textContent = '';
+  $('#back-btn').classList.add('hidden');
+  renderers[v]?.(params);
+  history.replaceState(null, '', v === 'today' ? location.pathname + (DEMO ? '?demo=1' : '') : `#${v}`);
+}
+$$('.nav-btn').forEach(b => b.onclick = () => nav(b.dataset.nav));
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea,select') || e.metaKey || e.ctrlKey) { if (e.key === 'Escape') e.target.blur(); return; }
+  const map = { '1': 'today', '2': 'tasks', '3': 'home', '4': 'projects', '5': 'calendar' };
+  if (map[e.key]) nav(map[e.key]);
+  if (e.key === '/') { e.preventDefault(); $('#ask-input').focus(); }
+  if (e.key === 'n') { e.preventDefault(); openTaskEditor(); }
+  if (e.key === 'Escape') { closeSheet(); closeAI(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED ROW COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════
+function contextLine(t) {
+  const parts = [];
+  const today = S.today();
+  if (t.due_date) parts.push(t.due_date < today && t.status === 'open' ? `<b style="color:var(--coral)">Overdue · ${D.humanDate(t.due_date, today)}</b>` : `<b>${esc(D.humanDate(t.due_date, today))}</b>`);
+  const sd = D.dateOf(t.scheduled_start, S.tz); if (sd && sd !== t.due_date) parts.push(`${esc(D.humanDate(sd, today))} ${esc(D.fmtHM(D.timeOf(t.scheduled_start, S.tz)))}`);
+  if (t.project_id) parts.push(esc(projOf(t.project_id)?.name || '')); else if (t.area_id) parts.push(esc(areaOf(t.area_id)?.name || ''));
+  if (t.recurrence) parts.push('↻ ' + esc(R.describeRule(t.recurrence)));
+  if (t.assignee_id && t.assignee_id !== S.person?.id) parts.push(esc(personOf(t.assignee_id)?.name || ''));
+  if (t.duration_min) parts.push(mins(t.duration_min));
+  return parts.join(' · ');
+}
+// Row for a planner candidate (task | routine | maintenance | step)
+function candRow(c, { why = false } = {}) {
+  const isTask = c.kind === 'task';
+  const done = isTask && c.ref.status !== 'open';
+  const chk = h('div', { class: 'check' + (done ? ' on' : '') + (c.importance === 'must' && !done ? ' must' : ''), role: 'checkbox', 'aria-checked': done, title: 'Mark done' }, svgCheck());
+  chk.onclick = e => { e.stopPropagation(); doCandidate(c); };
+  let ctxLine = '';
+  if (isTask) ctxLine = contextLine(c.ref);
+  else if (c.kind === 'routine') ctxLine = `${c.overdueDays > 0 ? `<b style="color:var(--amber)">${c.overdueDays}d late</b> · ` : ''}Routine · ${esc(R.describeRule(c.rule))}${c.ref.streak ? ` · 🔥 ${c.ref.streak}` : ''}`;
+  else if (c.kind === 'maintenance') ctxLine = `Maintenance · ${c.due_date < S.today() ? `<b style="color:var(--coral)">${D.diffDays(c.due_date, S.today())}d overdue</b>` : 'due ' + esc(D.humanDate(c.due_date, S.today()))}`;
+  else if (c.kind === 'step') ctxLine = `Next step · ${mins(c.duration_min)} · P${c.project_priority}`;
+  if (why && c.reasons?.length) ctxLine += ` <span class="score-why">· ${esc(c.reasons.join(', '))}</span>`;
+  const row = h('div', { class: 'row' + (done ? ' done' : ''), 'data-cid': c.id },
+    chk,
+    h('div', { class: 'body' }, h('div', { class: 'title' }, c.title), h('div', { class: 'ctx', html: ctxLine })),
+    h('div', { class: 'right' }, c.importance === 'must' && !done ? h('span', { class: 'tag must' }, 'Must') : null, svgChev()));
+  row.onclick = () => openCandidate(c);
+  return row;
+}
+function taskRow(t, opts) { return candRow({ id: t.id, kind: 'task', ref: t, title: t.title, importance: t.importance }, opts); }
+async function doCandidate(c) {
+  if (c.kind === 'task') return c.ref.status === 'open' ? completeTask(c.ref.id) : uncompleteTask(c.ref.id);
+  if (c.kind === 'routine') return quickLogRoutine(c.ref);
+  if (c.kind === 'maintenance') return recordMaintenance(c.ref.id);
+  if (c.kind === 'step') return completeStep(c.ref.id);
+}
+function openCandidate(c) {
+  if (c.kind === 'task') return openTaskEditor(c.ref);
+  if (c.kind === 'routine') return openRoutineSheet(c.ref);
+  if (c.kind === 'maintenance') return openMaintenanceSheet(c.ref);
+  if (c.kind === 'step') { nav('projects', { id: c.ref.project_id }); }
+}
+async function quickLogRoutine(r) {
+  if (r.pet_id) return openRoutineSheet(r);   // ask duration/focus for Ruby
+  await logRoutine(r.id);
+}
+// swipe-to-act wrapper for phones (left: snooze/delete)
+function swipeable(row, { onSnooze, onDelete }) {
+  const wrap = h('div', { class: 'swipe' });
+  const under = h('div', { class: 'under' });
+  if (onSnooze) under.append(h('button', { class: 'snooze', onclick: e => { e.stopPropagation(); reset(); onSnooze(); } }, 'Tomorrow'));
+  if (onDelete) under.append(h('button', { class: 'del', onclick: e => { e.stopPropagation(); reset(); onDelete(); } }, 'Delete'));
+  wrap.append(under, row);
+  let sx = 0, sy = 0, dx = 0, active = false, horiz = null;
+  const reset = () => { row.style.transform = ''; wrap.dataset.open = ''; };
+  row.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; active = true; horiz = null; row.style.transition = 'none'; wrap.classList.add('dragging'); }, { passive: true });
+  row.addEventListener('touchmove', e => {
+    if (!active) return; const x = e.touches[0].clientX - sx, y = e.touches[0].clientY - sy;
+    if (horiz === null && (Math.abs(x) > 6 || Math.abs(y) > 6)) horiz = Math.abs(x) > Math.abs(y);
+    if (!horiz) return; dx = Math.min(0, x); row.style.transform = `translateX(${Math.max(dx, -150)}px)`;
+  }, { passive: true });
+  row.addEventListener('touchend', () => { active = false; row.style.transition = ''; wrap.classList.remove('dragging'); if (dx < -60) { row.style.transform = 'translateX(-150px)'; wrap.dataset.open = '1'; } else reset(); }, { passive: true });
+  row.addEventListener('click', e => { if (wrap.dataset.open) { e.stopPropagation(); reset(); } }, true);
+  return wrap;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TODAY
+// ═══════════════════════════════════════════════════════════════════════════
+renderers.today = function renderToday() {
+  const body = $('#today-body'); const scroll = body.scrollTop;
+  const C = ctx(); const today = C.today;
+  const plan = P.planDay(today, C);
+  const attn = attention(C);
+  const mode = P.modeFor(today, C);
+  const wx = S.weather[today];
+  const doneToday = S.all('tasks').filter(t => t.status === 'done' && D.dateOf(t.completed_at, S.tz) === today);
+  const person = S.person?.name?.split(' ')[0] || '';
+  const hour = Number(C.now.slice(0, 2));
+  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  body.innerHTML = '';
+  const wrap = h('div', { class: 'container' });
+  // hero
+  const capPct = plan.capacity.minutes ? Math.min(100, Math.round(plan.used / plan.capacity.minutes * 100)) : 100;
+  const modeChip = mode.mode !== 'normal' ? h('span', { class: 'mode-chip', onclick: () => openDayModeSheet(today) }, `${{ sick: '🤒', travel: '✈️', busy: '💼', vacation: '🌴', project: '🔨' }[mode.mode] || ''} ${mode.mode} day`) : h('span', { class: 'mode-chip', style: 'background:var(--bg3);color:var(--text3)', onclick: () => openDayModeSheet(today) }, 'normal day ▾');
+  wrap.append(h('div', { class: 'today-hero' },
+    h('div', {}, h('div', { class: 'date' }, `${D.longDate(today)}${wx ? ` · ${wx.tmax_f}° · ${wx.rain_prob}% rain` : ''}`), h('h2', {}, `${greet}${person ? ', ' + person : ''}.`), h('div', { style: 'margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, modeChip, plan.overloaded ? h('span', { class: 'tag coral' }, 'Overloaded') : null)),
+    h('div', { class: 'cap-meter' + (capPct >= 100 && plan.used > plan.capacity.minutes ? ' over' : '') },
+      h('div', { class: 'lbl' }, h('span', {}, 'Planned time'), h('b', {}, plan.capacity.mustOnly ? 'Must-dos only' : `${mins(plan.used) || '0m'} of ${mins(plan.capacity.minutes) || '0m'}`)),
+      h('div', { class: 'bar' }, h('i', { style: `width:${capPct}%` })),
+      h('div', { class: 'faint', style: 'font-size:11.5px;margin-top:5px' }, `${doneToday.length} done today · capacity from ${mode.mode} ${D.isWeekend(today) ? 'weekend' : 'weekday'}`))));
+
+  const cols = h('div', { class: 'today-cols' });
+  const left = h('div'), right = h('div');
+  // Must do + Today
+  const card1 = h('div', { class: 'card' });
+  if (plan.must.length) { card1.append(h('div', { class: 'card-hd' }, h('h3', {}, 'Must do'), h('span', { class: 'cnt' }, `${plan.must.length}`))); const bd = h('div', { class: 'card-bd' }); plan.must.forEach(c => bd.append(candRow(c))); card1.append(bd); }
+  card1.append(h('div', { class: 'card-hd' }, h('h3', {}, 'Today'), h('span', { class: 'cnt' }, plan.planned.length ? `${plan.planned.length} planned` : '')));
+  const bd2 = h('div', { class: 'card-bd' });
+  if (plan.planned.length) plan.planned.forEach(c => bd2.append(candRow(c)));
+  else bd2.append(h('div', { class: 'empty' }, h('div', { class: 'big' }, plan.must.length ? '👍' : '🎉'), plan.capacity.mustOnly ? 'Must-dos only today — rest up.' : plan.must.length ? 'Nothing else planned. Enjoy the room.' : 'Nothing planned. Enjoy your day.'));
+  if (doneToday.length) { bd2.append(h('div', { class: 'sec-title' }, 'Completed today')); doneToday.slice(0, 6).forEach(t => bd2.append(taskRow(t))); }
+  card1.append(bd2);
+  left.append(card1);
+
+  // Coming up
+  const cu = h('div', { class: 'card', style: 'margin-top:20px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Coming up'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => nav('calendar') }, 'Calendar →')));
+  const cub = h('div', { class: 'card-bd' });
+  let any = false;
+  for (let i = 1; i <= 5; i++) {
+    const d = D.addDays(today, i);
+    const evs = eventsOn(d).filter(e => e.kind !== 'work_block');
+    const dp = P.planDay(d, C);
+    const fresh = c => !(c.due_date && c.due_date <= today) && !(c.kind === 'routine' && c.overdueDays > 0);
+    const items = [...evs.map(e => ({ ev: e })), ...dp.must.filter(fresh).map(c => ({ c })), ...dp.planned.filter(c => c.importance !== 'nice' && fresh(c)).slice(0, 3).map(c => ({ c }))];
+    if (!items.length) continue; any = true;
+    cub.append(h('div', { class: 'coming-day' }, `${D.humanDate(d, today)}${S.weather[d] && S.weather[d].rain_prob >= 50 ? ` · 🌧 ${S.weather[d].rain_prob}%` : ''}`));
+    for (const it of items) {
+      if (it.ev) cub.append(h('div', { class: 'row no-line', onclick: () => openEventEditor(it.ev) }, h('div', { class: 'ico' }, '📅'), h('div', { class: 'body' }, h('div', { class: 'title' }, it.ev.title), h('div', { class: 'ctx' }, it.ev.all_day ? 'All day' : `${D.fmtHM(D.timeOf(it.ev.starts_at, S.tz))}${it.ev.ends_at ? ' – ' + D.fmtHM(D.timeOf(it.ev.ends_at, S.tz)) : ''}`)), svgChev()));
+      else { const r = candRow(it.c); r.classList.add('no-line'); cub.append(r); }
+    }
+  }
+  if (!any) cub.append(h('div', { class: 'empty' }, 'A quiet few days ahead.'));
+  cu.append(cub); left.append(cu);
+
+  // Needs attention
+  const na = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Needs attention'), h('span', { class: 'cnt' }, attn.length ? `${attn.length}` : '')));
+  const nab = h('div', { class: 'card-bd' });
+  if (!attn.length) nab.append(h('div', { class: 'empty' }, h('div', { class: 'big' }, '✨'), 'Nothing slipping through.'));
+  attn.forEach(a => nab.append(attentionRow(a)));
+  na.append(nab); right.append(na);
+
+  // Projects
+  const pr = h('div', { class: 'card', style: 'margin-top:20px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Projects'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => nav('projects') }, 'All →')));
+  const prb = h('div', { class: 'card-bd' });
+  S.all('projects').filter(p => p.status === 'active').sort((a, b) => a.priority - b.priority).slice(0, 3).forEach(p => {
+    const next = P.nextStepOf(p.id, C); const pct = projectProgress(p.id);
+    prb.append(h('div', { class: 'proj-mini', onclick: () => nav('projects', { id: p.id }) },
+      h('div', { class: 'body' }, h('div', { class: 'title' }, h('span', { class: 'tag violet' }, `P${p.priority}`), p.name), h('div', { class: 'next' }, next ? `Next: ${next.title}${next.est_min ? ' · ' + mins(next.est_min) : ''}` : 'All steps done'), h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` }))),
+      h('div', { class: 'faint', style: 'font-weight:700;font-size:13px' }, `${pct}%`)));
+  });
+  pr.append(prb); right.append(pr);
+
+  // Ruby + relationship quick logs
+  const ql = h('div', { class: 'card', style: 'margin-top:20px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Quick log')));
+  const qlb = h('div', { class: 'card-bd', style: 'display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px 14px' });
+  S.all('routines').filter(r => r.active !== false).sort((a, b) => a.name.localeCompare(b.name)).forEach(r => {
+    const last = D.dateOf(r.last_done_at, S.tz); const doneToday = last === today;
+    qlb.append(h('button', { class: 'chip' + (doneToday ? ' active' : ''), onclick: () => doneToday ? openRoutineSheet(r) : quickLogRoutine(r), title: last ? `Last: ${D.humanDate(last, today)}` : 'Never logged' }, `${r.emoji || '•'} ${r.name}${doneToday ? ' ✓' : ''}`));
+  });
+  ql.append(qlb); right.append(ql);
+
+  cols.append(left, right); wrap.append(cols); body.append(wrap); body.scrollTop = scroll;
+};
+function attentionRow(a) {
+  const acts = h('div', { class: 'acts' });
+  const primary = actionButtonFor(a);
+  if (primary) acts.append(primary);
+  acts.append(h('button', { class: 'btn btn-quiet btn-sm', title: 'Snooze a day', onclick: e => { e.stopPropagation(); snoozeAttention(a.key); } }, 'Later'));
+  const row = h('div', { class: 'attn' }, h('span', { class: `rank r${a.rank}` }), h('div', { class: 'body' }, h('div', { class: 'title' }, a.title), a.detail ? h('div', { class: 'detail' }, a.detail) : null), acts);
+  return row;
+}
+function actionButtonFor(a) {
+  const ac = a.action; if (!ac) return null;
+  const b = (label, fn) => h('button', { class: 'btn btn-primary btn-sm', onclick: e => { e.stopPropagation(); fn(); } }, label);
+  switch (ac.type) {
+    case 'open_task': return b('Open', () => openTaskEditor(S.get('tasks', ac.id)));
+    case 'record_maintenance': return b('Done', () => openMaintenanceSheet(S.get('maintenance_rules', ac.id)));
+    case 'log_routine': return b('Log it', () => quickLogRoutine(S.get('routines', ac.id)));
+    case 'schedule_routine': return b(ac.date ? `Plan ${D.humanDate(ac.date, S.today())}` : 'Schedule', () => scheduleRoutine(S.get('routines', ac.id), ac.date));
+    case 'open_project': return b('Open', () => nav('projects', { id: ac.id }));
+    case 'schedule_step': return b('Block time', () => scheduleStep(S.get('project_steps', ac.id), ac.date));
+    case 'log_plant': return b('Log', () => openPlantLogSheet(S.get('plants', ac.id)));
+  }
+  return null;
+}
+const snoozed = new Set(JSON.parse(localStorage.getItem('hb_snooze') || '[]').filter(x => x.until > Date.now()).map(x => x.key));
+function snoozeAttention(key) { snoozed.add(key); const arr = JSON.parse(localStorage.getItem('hb_snooze') || '[]').filter(x => x.until > Date.now()); arr.push({ key, until: Date.now() + 86400e3 }); localStorage.setItem('hb_snooze', JSON.stringify(arr)); renderers.today(); }
+const attention = c => P.needsAttention(c).filter(i => !snoozed.has(i.key));
+
+async function scheduleRoutine(r, date) {
+  if (!r) return;
+  const rule = R.normalizeRule(r.cadence);
+  if (rule?.freq === 'monthly') {   // date night → create an event on a free evening
+    const day = date || findFreeEvening();
+    await dbInsert('events', { title: r.name, kind: 'fixed', starts_at: D.toISO(day, '19:00', S.tz), ends_at: D.toISO(day, '22:00', S.tz), color: 'violet', notes: 'Planned from Needs Attention' });
+    toast(`${r.name} on ${D.humanDate(day, S.today())} — tap to adjust`); nav('calendar', { date: day }); return;
+  }
+  const day = date || S.today();
+  await dbInsert('tasks', { title: r.name, importance: r.importance || 'should', due_date: day, duration_min: r.default_min || 30, location: r.location || 'home', weather_dependent: !!r.weather_dependent, area_id: r.area_id || null, routine_id: r.id, source: 'routine' });
+  toast(`${r.name} planned for ${D.humanDate(day, S.today())}`);
+}
+function findFreeEvening() {
+  const t = S.today();
+  for (let i = 1; i < 21; i++) { const d = D.addDays(t, i); const w = D.dow(d); if (!['fri','sat','thu'].includes(w)) continue; if (!eventsOn(d).some(e => e.kind !== 'work_block' && D.hmToMin(D.timeOf(e.starts_at, S.tz)) >= 17 * 60)) return d; }
+  return D.addDays(t, 7);
+}
+async function scheduleStep(step, date) {
+  if (!step) return; const p = projOf(step.project_id);
+  const day = date || S.today();
+  const start = D.isWeekend(day) ? '09:00' : '18:00';
+  const t = await dbInsert('tasks', { title: step.title, importance: 'should', due_date: day, scheduled_start: D.toISO(day, start, S.tz), scheduled_end: D.toISO(day, D.minToHM(D.hmToMin(start) + (step.est_min || 90)), S.tz), duration_min: step.est_min || 90, location: 'home', project_id: p?.id || null, step_id: step.id, area_id: p?.area_id || null, source: 'planner' });
+  await dbInsert('events', { title: `${p?.name || 'Project'}: ${step.title}`, kind: 'work_block', starts_at: t.scheduled_start, ends_at: t.scheduled_end, task_id: t.id, project_id: p?.id || null, color: 'violet' }, { silent: true });
+  toast(`Blocked ${D.humanDate(day, S.today())} ${D.fmtHM(start)} for ${step.title}`);
+}
+function eventsOn(ds) { return S.all('events').filter(e => D.dateOf(e.starts_at, S.tz) === ds).sort((a, b) => a.starts_at.localeCompare(b.starts_at)); }
+
+// day mode sheet -------------------------------------------------------------
+function openDayModeSheet(date) {
+  const cur = P.modeFor(date, ctx());
+  let mode = cur.mode, to = date, note = cur.note || '';
+  const MODES = [['normal','Normal','Full capacity'],['busy','Busy workday','Reduced discretionary time'],['sick','Sick','Must-dos only, routines reduced'],['travel','Travel','Only away-friendly tasks'],['project','Project day','Big block for a priority project'],['vacation','Vacation','Nothing planned unless you ask']];
+  openSheet({ title: `Day mode · ${D.humanDate(date, S.today())}`, build: b => {
+    const list = h('div', { class: 'rows' });
+    MODES.forEach(([v, l, sub]) => { const it = h('div', { class: 'srow' }, h('span', { class: 'ic' }, { normal: '☀️', busy: '💼', sick: '🤒', travel: '✈️', project: '🔨', vacation: '🌴' }[v]), h('div', { style: 'flex:1' }, h('div', { class: 'lb', style: 'color:var(--text)' }, l), h('div', { class: 'faint', style: 'font-size:12px' }, sub)), h('div', { class: 'check' + (mode === v ? ' on' : ''), 'data-v': v }, svgCheck())); it.onclick = () => { mode = v; $$('.check', list).forEach(c => c.classList.toggle('on', c.dataset.v === v)); }; list.append(it); });
+    b.append(list);
+    const toI = h('input', { type: 'date', value: to, min: date, onchange: e => to = e.target.value });
+    b.append(h('div', { class: 'rows' }, srow('📅', 'Through', toI)));
+    const nI = h('input', { class: 'big-input', style: 'margin-top:12px;font-size:15px', placeholder: 'Note (optional) — “conference in Houston”', value: note, oninput: e => note = e.target.value }); b.append(nI);
+    b.append(h('p', { class: 'faint', style: 'font-size:12.5px;margin-top:12px' }, 'HomeBase re-plans the affected days: must-dos stay, routines shrink to their short version, everything else moves without piling onto one day.'));
+  }, onSave: async () => { await applyDayMode(date, to, mode, note); } });
+}
+async function applyDayMode(from, to, mode, note) {
+  const days = []; for (let d = from; d <= to && days.length < 31; d = D.addDays(d, 1)) days.push(d);
+  const C = ctx();
+  const result = mode === 'normal' ? null : P.replan(days, mode, C);
+  for (const d of days) {
+    const ex = S.all('day_modes').find(m => m.date === d && !m.person_id);
+    if (mode === 'normal') { if (ex) await dbRemove('day_modes', ex.id, { silent: true }); }
+    else if (ex) await dbUpdate('day_modes', ex.id, { mode, note: note || null }, { silent: true });
+    else await dbInsert('day_modes', { date: d, mode, note: note || null }, { silent: true });
+  }
+  if (mode === 'normal') {
+    // restore tasks moved by a previous replan
+    for (const t of S.all('tasks').filter(t => t.status === 'open' && t.original_date && days.includes(t.original_date))) await dbUpdate('tasks', t.id, { due_date: t.original_date, original_date: null }, { silent: true, reason: 'replan:normal' });
+    toast('Back to normal'); return;
+  }
+  let moved = 0;
+  for (const m of result.move) if (m.to) { await dbUpdate('tasks', m.task.id, { due_date: m.to, original_date: m.task.original_date || m.task.due_date || from, scheduled_start: null, scheduled_end: null, postponed: (m.task.postponed || 0) + 1 }, { action: 'replan', reason: `replan:${mode}` }); moved++; }
+  logAct('day_mode', null, 'replan', null, { from, to, mode, kept: result.keep.length, reduced: result.reduce.length, moved }, note);
+  toast(`${mode} mode: kept ${result.keep.length}, reduced ${result.reduce.length}, moved ${moved}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TASKS
+// ═══════════════════════════════════════════════════════════════════════════
+const TS = { list: 'today', filter: 'open', q: '' };
+renderers.tasks = function renderTasks(params) {
+  if (params?.list) TS.list = params.list;
+  const root = $('#tasks-layout');
+  const scrollPos = $('.tasks-main .scroll', root)?.scrollTop || 0;
+  root.innerHTML = '';
+  const today = S.today();
+  const open = S.all('tasks').filter(t => t.status === 'open');
+  const side = h('div', { class: 'tasks-side' + (isPhone() && TS.list === '_home' ? ' mobile-show' : '') });
+  const sideScroll = h('div', { class: 'scroll' });
+  const item = (key, em, label, cnt) => { const it = h('div', { class: 'side-item' + (TS.list === key ? ' active' : '') }, h('span', { class: 'em' }, em), label, cnt != null ? h('span', { class: 'cnt' }, cnt) : null); it.onclick = () => { TS.list = key; renderers.tasks(); }; return it; };
+  sideScroll.append(h('div', { class: 'sec-title' }, 'Views'),
+    item('today', '☀️', 'Today', open.filter(t => t.due_date && t.due_date <= today).length),
+    item('week', '📆', 'This week', open.filter(t => t.due_date && t.due_date <= D.addDays(today, 7)).length),
+    item('all', '📋', 'All open', open.length),
+    item('mine', '👤', 'Mine', open.filter(t => t.assignee_id === S.person?.id).length),
+    item('backlog', '🗂️', 'Backlog', open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).length),
+    item('done', '✅', 'Done', null));
+  const grp = (kind, label) => { const as = S.all('areas').filter(a => a.kind === kind && !a.archived).sort((a, b) => a.sort - b.sort); if (!as.length) return; sideScroll.append(h('div', { class: 'sec-title' }, label, h('button', { class: 'link', onclick: () => openAreaEditor(null, kind) }, '+ Add'))); as.forEach(a => sideScroll.append(item('area:' + a.id, a.emoji || '📁', a.name, open.filter(t => t.area_id === a.id).length))); };
+  grp('room', 'Rooms'); grp('relationship', 'Relationship'); grp('life', 'Life');
+  const rts = S.all('routines').filter(r => r.active !== false);
+  if (rts.length) sideScroll.append(h('div', { class: 'sec-title' }, 'Routines'), item('routines', '🔁', 'Routines', rts.length));
+  side.append(sideScroll);
+
+  const main = h('div', { class: 'tasks-main' + (isPhone() && TS.list === '_home' ? ' mobile-hide' : '') });
+  let title = 'Today', list = [];
+  const sortDue = arr => arr.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || P.IMPORTANCE_W[b.importance] - P.IMPORTANCE_W[a.importance]);
+  if (TS.list === 'today') { title = 'Today'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= today) || D.dateOf(t.scheduled_start, S.tz) === today)); }
+  else if (TS.list === 'week') { title = 'This week'; list = sortDue(open.filter(t => (t.due_date && t.due_date <= D.addDays(today, 7)) || (t.scheduled_start && D.dateOf(t.scheduled_start, S.tz) <= D.addDays(today, 7)))); }
+  else if (TS.list === 'all') { title = 'All open'; list = sortDue(open); }
+  else if (TS.list === 'mine') { title = 'Mine'; list = sortDue(open.filter(t => t.assignee_id === S.person?.id)); }
+  else if (TS.list === 'backlog') { title = 'Backlog'; list = open.filter(t => !t.due_date && !t.scheduled_start && !t.window_start).sort((a, b) => P.IMPORTANCE_W[b.importance] - P.IMPORTANCE_W[a.importance]); }
+  else if (TS.list === 'done') { title = 'Done'; list = S.all('tasks').filter(t => t.status === 'done').sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || '')).slice(0, 200); }
+  else if (TS.list.startsWith('area:')) { const a = areaOf(TS.list.slice(5)); title = a ? `${a.emoji || ''} ${a.name}` : 'Area'; list = sortDue(open.filter(t => t.area_id === a?.id)); }
+  if (TS.q) list = list.filter(t => t.title.toLowerCase().includes(TS.q.toLowerCase()));
+
+  const hd = h('div', { class: 'list-hd' });
+  if (isPhone()) hd.append(h('button', { class: 'icon-btn', onclick: () => { TS.list = '_home'; renderers.tasks(); }, 'aria-label': 'Lists' }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>' })));
+  hd.append(h('h2', {}, title));
+  const search = h('input', { class: 'chip', style: 'width:150px;font-weight:500', placeholder: 'Search', value: TS.q, oninput: debounce(e => { TS.q = e.target.value; renderers.tasks(); }, 200) });
+  hd.append(search, h('button', { class: 'btn btn-primary btn-sm', onclick: () => openTaskEditor(null, TS.list.startsWith('area:') ? { area_id: TS.list.slice(5) } : {}) }, '+ Task'));
+  main.append(hd);
+  const sc = h('div', { class: 'scroll', style: 'flex:1;padding:0 12px 140px' });
+  if (TS.list === 'routines') { sc.append(routinesList()); }
+  else if (TS.list === '_home') { /* phone list picker shown in side */ }
+  else if (!list.length) sc.append(h('div', { class: 'empty' }, h('div', { class: 'big' }, '🎉'), 'Nothing here.'));
+  else {
+    const card = h('div', { class: 'card' }); const bd = h('div', { class: 'card-bd' });
+    let lastHead = null;
+    for (const t of list) {
+      if (TS.list === 'today' || TS.list === 'week' || TS.list === 'all') {
+        const head = !t.due_date ? 'No date' : t.due_date < today ? 'Overdue' : D.humanDate(t.due_date, today);
+        if (head !== lastHead) { bd.append(h('div', { class: 'sec-title', style: head === 'Overdue' ? 'color:var(--coral)' : '' }, head)); lastHead = head; }
+      }
+      const row = taskRow(t); row.classList.add('no-line');
+      bd.append(isPhone() && t.status === 'open' ? swipeable(row, { onSnooze: () => postponeTask(t.id, D.addDays(today, 1), 'snooze'), onDelete: () => deleteTaskConfirm(t) }) : row);
+    }
+    card.append(bd); sc.append(card);
+  }
+  main.append(sc);
+  root.append(side, main);
+  const s = $('.tasks-main .scroll', root); if (s) s.scrollTop = scrollPos;
+  if (isPhone() && TS.list === '_home') { main.classList.add('mobile-hide'); side.classList.add('mobile-show'); }
+};
+function routinesList() {
+  const card = h('div', { class: 'card' }); const bd = h('div', { class: 'card-bd' });
+  const today = S.today();
+  S.all('routines').filter(r => r.active !== false).sort((a, b) => a.name.localeCompare(b.name)).forEach(r => {
+    const last = D.dateOf(r.last_done_at, S.tz); const st = R.dueState(r.cadence, last, today);
+    const row = h('div', { class: 'row', onclick: () => openRoutineSheet(r) }, h('div', { class: 'ico' }, r.emoji || '🔁'), h('div', { class: 'body' }, h('div', { class: 'title' }, r.name), h('div', { class: 'ctx', html: `${esc(R.describeRule(r.cadence))} · last ${last ? esc(D.humanDate(last, today)) : 'never'}${r.streak ? ` · 🔥 ${r.streak}` : ''}${st.due && last !== today ? ' · <b style="color:var(--amber)">due</b>' : ''}` })), h('div', { class: 'right' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: e => { e.stopPropagation(); quickLogRoutine(r); } }, last === today ? 'Log again' : 'Log'), svgChev()));
+    bd.append(row);
+  });
+  card.append(bd); return card;
+}
+async function deleteTaskConfirm(t) {
+  if (await confirmSheet('Delete task?', `“${t.title}” will be removed. Completed history stays in the log.`)) { await dbRemove('tasks', t.id); toast('Deleted'); }
+}
+
+// ─── TASK EDITOR ──────────────────────────────────────────────────────────
+function openTaskEditor(task, defaults = {}) {
+  const isNew = !task;
+  const t = task ? { ...task } : { title: '', notes: '', importance: 'should', due_date: null, duration_min: 30, location: 'home', energy: 'med', weather_dependent: false, area_id: null, project_id: null, assignee_id: null, recurrence: null, scheduled_start: null, scheduled_end: null, ...defaults };
+  openSheet({ title: isNew ? 'New task' : 'Task', saveLabel: isNew ? 'Add' : 'Save', build: b => {
+    const title = h('input', { class: 'big-input', placeholder: 'What needs to happen?', value: t.title, autofocus: true, oninput: e => t.title = e.target.value, onkeydown: e => { if (e.key === 'Enter') $('#sheet-right').click(); } });
+    const notes = h('textarea', { class: 'big-input', style: 'margin-top:8px', placeholder: 'Notes', rows: 2, oninput: e => t.notes = e.target.value }, t.notes || '');
+    b.append(title, notes);
+    const seg = h('div', { class: 'seg-imp' });
+    [['must','Must do','Consequences if skipped'],['should','Should do','Important, movable'],['nice','Nice to do','When time permits']].forEach(([v, l, s]) => { const btn = h('button', { class: v + (t.importance === v ? ' active' : ''), title: s }, l); btn.onclick = () => { t.importance = v; $$('button', seg).forEach(x => x.classList.toggle('active', x.classList.contains(v))); }; seg.append(btn); });
+    b.append(seg);
+    const rows = h('div', { class: 'rows' });
+    const due = h('input', { type: 'date', value: t.due_date || '', onchange: e => t.due_date = e.target.value || null });
+    rows.append(srow('📅', 'Due', due));
+    const schedV = vtext(t.scheduled_start ? `${D.humanDate(D.dateOf(t.scheduled_start, S.tz), S.today())} ${D.fmtHM(D.timeOf(t.scheduled_start, S.tz))}` : 'None');
+    rows.append(srow('🕐', 'Work block', schedV, async () => {
+      const d = t.scheduled_start ? D.dateOf(t.scheduled_start, S.tz) : (t.due_date || S.today()); const tm = t.scheduled_start ? D.timeOf(t.scheduled_start, S.tz) : (D.isWeekend(d) ? '09:00' : '18:00');
+      const r = await scheduleSheet(d, tm, t.duration_min); if (r === null) return; if (r === false) { t.scheduled_start = t.scheduled_end = null; schedV.textContent = 'None'; return; }
+      t.scheduled_start = D.toISO(r.date, r.time, S.tz); t.scheduled_end = D.toISO(r.date, D.minToHM(D.hmToMin(r.time) + (t.duration_min || 30)), S.tz); schedV.textContent = `${D.humanDate(r.date, S.today())} ${D.fmtHM(r.time)}`;
+    }));
+    const dur = h('input', { type: 'number', min: 5, step: 5, value: t.duration_min || '', placeholder: '30', style: 'width:64px', onchange: e => t.duration_min = Number(e.target.value) || null });
+    rows.append(srow('⏱️', 'Duration (min)', dur));
+    const areaV = vtext(t.area_id ? areaLabel(t.area_id) : 'None');
+    rows.append(srow('📁', 'Area', areaV, async () => { const v = await pickOne('Area', [{ value: null, label: 'None' }, ...S.all('areas').filter(a => !a.archived).sort((a, b) => a.sort - b.sort).map(a => ({ value: a.id, label: `${a.emoji || ''} ${a.name}` }))], t.area_id); t.area_id = v; areaV.textContent = v ? areaLabel(v) : 'None'; }));
+    const projV = vtext(t.project_id ? projOf(t.project_id)?.name : 'None');
+    rows.append(srow('📐', 'Project', projV, async () => { const v = await pickOne('Project', [{ value: null, label: 'None' }, ...S.all('projects').filter(p => p.status === 'active').sort((a, b) => a.priority - b.priority).map(p => ({ value: p.id, label: p.name }))], t.project_id); t.project_id = v; projV.textContent = v ? projOf(v)?.name : 'None'; if (v && !t.area_id) { t.area_id = projOf(v)?.area_id || null; areaV.textContent = t.area_id ? areaLabel(t.area_id) : 'None'; } }));
+    const repV = vtext(R.describeRule(t.recurrence) === 'Once' ? 'Never' : R.describeRule(t.recurrence));
+    rows.append(srow('🔁', 'Repeat', repV, async () => { const v = await repeatPicker(t.recurrence); if (v === undefined) return; t.recurrence = v; repV.textContent = v ? R.describeRule(v) : 'Never'; }));
+    const whoV = vtext(t.assignee_id ? personOf(t.assignee_id)?.name : 'Anyone');
+    rows.append(srow('👤', 'Who', whoV, async () => { const v = await pickOne('Who', [{ value: null, label: 'Anyone' }, ...S.people.map(p => ({ value: p.id, label: p.name }))], t.assignee_id); t.assignee_id = v; whoV.textContent = v ? personOf(v)?.name : 'Anyone'; }));
+    const loc = h('select', { onchange: e => t.location = e.target.value }, ...[['home','At home'],['anywhere','Anywhere'],['away','Out / errand']].map(([v, l]) => h('option', { value: v, selected: t.location === v }, l)));
+    rows.append(srow('📍', 'Where', loc));
+    const wx = h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: t.weather_dependent, onchange: e => t.weather_dependent = e.target.checked }), h('i'));
+    rows.append(srow('🌦️', 'Needs dry weather', wx));
+    const en = h('select', { onchange: e => t.energy = e.target.value }, ...[['low','Low'],['med','Medium'],['high','High']].map(([v, l]) => h('option', { value: v, selected: t.energy === v }, l)));
+    rows.append(srow('⚡', 'Energy', en));
+    b.append(rows);
+    if (!isNew) {
+      const acts = h('div', { style: 'display:flex;gap:8px;margin-top:16px;flex-wrap:wrap' });
+      if (t.status === 'open') { acts.append(h('button', { class: 'btn btn-ghost', onclick: () => { closeSheet(); postponeTask(t.id, D.addDays(S.today(), 1), 'manual'); } }, 'Tomorrow'), h('button', { class: 'btn btn-ghost', onclick: () => { closeSheet(); postponeTask(t.id, D.addDays(S.today(), D.dow(S.today()) === 'sat' ? 7 : (6 - D.DOW.indexOf(D.dow(S.today())) + 7) % 7 || 7), 'manual'); } }, 'This weekend')); }
+      acts.append(h('button', { class: 'btn btn-danger', style: 'margin-left:auto', onclick: () => { closeSheet(); deleteTaskConfirm(t); } }, 'Delete'));
+      b.append(acts);
+      const hist = S.all('activity_log').filter(a => a.entity_id === t.id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
+      if (hist.length) { b.append(h('div', { class: 'sec-title' }, 'History')); hist.forEach(a => b.append(h('div', { class: 'faint', style: 'font-size:12.5px;padding:3px 4px' }, `${D.humanDate(D.dateOf(a.at, S.tz), S.today())} · ${a.action}${a.reason ? ' · ' + a.reason : ''}${a.actor === 'ai' ? ' · HomeBase' : ''}`))); }
+    }
+  }, onSave: async () => {
+    if (!t.title.trim()) { toast('Give it a name'); return false; }
+    const patch = { title: t.title.trim(), notes: t.notes || null, importance: t.importance, due_date: t.due_date || null, duration_min: t.duration_min || null, location: t.location, energy: t.energy, weather_dependent: !!t.weather_dependent, area_id: t.area_id || null, project_id: t.project_id || null, assignee_id: t.assignee_id || null, recurrence: t.recurrence || null, scheduled_start: t.scheduled_start || null, scheduled_end: t.scheduled_end || null };
+    if (isNew) { if (patch.recurrence) patch.series_id = uuid(); if (patch.recurrence && !patch.due_date) patch.due_date = S.today(); await dbInsert('tasks', { ...patch, status: 'open', source: 'user', postponed: 0 }); toast('Added'); }
+    else { if (patch.recurrence && !task.series_id) patch.series_id = uuid(); await dbUpdate('tasks', task.id, patch); }
+  } });
+}
+function scheduleSheet(date, time, duration) {
+  return new Promise(res => {
+    let d = date, tm = time;
+    const inner = openSheetNested('Work block', b => {
+      b.append(h('div', { class: 'rows' }, srow('📅', 'Date', h('input', { type: 'date', value: d, onchange: e => d = e.target.value })), srow('🕐', 'Start', h('input', { type: 'time', value: tm, onchange: e => tm = e.target.value }))));
+      const free = freeSlots(d, duration || 30);
+      if (free.length) { b.append(h('div', { class: 'sec-title' }, 'Open slots')); const ch = h('div', { class: 'chips' }); free.slice(0, 6).forEach(s => ch.append(h('button', { onclick: () => { tm = s; $$('input[type=time]', b)[0].value = s; } }, D.fmtHM(s)))); b.append(ch); }
+      b.append(h('button', { class: 'btn btn-ghost btn-block', style: 'margin-top:14px', onclick: () => { inner.close(); res(false); } }, 'Remove work block'));
+    }, () => res({ date: d, time: tm }), () => res(null));
+  });
+}
+// nested sheet = reuse picker panel for a second level
+function openSheetNested(title, build, onSave, onCancel) {
+  const pk = $('#picker'); $('#picker-title').textContent = title; const body = $('#picker-body'); body.innerHTML = ''; body.style.padding = '16px';
+  build(body);
+  const close = () => { pk.classList.remove('open'); body.style.padding = '8px'; };
+  $('#picker-done').onclick = () => { close(); onSave(); };
+  pk.onclick = e => { if (e.target === pk) { close(); onCancel && onCancel(); } };
+  pk.classList.add('open');
+  return { close };
+}
+function freeSlots(ds, dur) {
+  const settings = P.settingsOf(ctx()); const wins = D.isWeekend(ds) ? settings.windows.weekend : settings.windows.weekday;
+  const busy = eventsOn(ds).map(e => [D.hmToMin(D.timeOf(e.starts_at, S.tz)), e.ends_at ? D.hmToMin(D.timeOf(e.ends_at, S.tz)) : D.hmToMin(D.timeOf(e.starts_at, S.tz)) + 60]);
+  const out = [];
+  for (const w of wins) for (let m = D.hmToMin(w.start); m + dur <= D.hmToMin(w.end); m += 30) if (!busy.some(([s, e]) => m < e && m + dur > s)) out.push(D.minToHM(m));
+  return out;
+}
+async function repeatPicker(cur) {
+  const opts = [{ value: '', label: 'Never' }, { value: 'daily', label: 'Daily' }, { value: 'weekdays', label: 'Weekdays' }, { value: 'weekly', label: 'Weekly' }, { value: 'weekend', label: 'Weekly, Sat or Sun' }, { value: 'biweekly', label: 'Every 2 weeks' }, { value: 'monthly', label: 'Monthly' }, { value: 'quarterly', label: 'Every 3 months' }, { value: 'biannual', label: 'Every 6 months' }, { value: 'yearly', label: 'Yearly' }, { value: 'custom', label: 'Custom…' }];
+  const key = !cur ? '' : cur.freq === 'weekly' && cur.byweekday?.join() === 'sat,sun' ? 'weekend' : cur.freq === 'daily' && cur.byweekday?.length === 5 ? 'weekdays' : cur.freq === 'weekly' && (cur.interval || 1) === 2 ? 'biweekly' : cur.freq === 'monthly' && cur.interval === 3 ? 'quarterly' : cur.freq === 'monthly' && cur.interval === 6 ? 'biannual' : (cur.interval || 1) === 1 ? cur.freq : 'custom';
+  const v = await pickOne('Repeat', opts, key);
+  if (v === key) return undefined;
+  if (v === '') return null;
+  if (v === 'weekend') return { freq: 'weekly', byweekday: ['sat','sun'], anchor: 'schedule' };
+  if (v === 'weekdays') return { freq: 'daily', byweekday: ['mon','tue','wed','thu','fri'], anchor: 'schedule' };
+  if (v === 'custom') { const n = Number(prompt('Every how many…', '2')) || 2; const u = (prompt('days, weeks or months?', 'weeks') || 'weeks').toLowerCase(); return { freq: u.startsWith('d') ? 'daily' : u.startsWith('m') ? 'monthly' : 'weekly', interval: n, anchor: 'completion' }; }
+  return { ...R.legacyRepeatToRule(v), anchor: 'schedule' };
+}
+
+// ─── ROUTINE SHEET (log with details, edit cadence) ───────────────────────
+function openRoutineSheet(r) {
+  const today = S.today(); const last = D.dateOf(r.last_done_at, S.tz);
+  let dur = r.default_min || 10, focus = '', note = '', reduced = false;
+  const logs = S.all('routine_log').filter(l => l.routine_id === r.id).sort((a, b) => b.done_at.localeCompare(a.done_at));
+  openSheet({ title: `${r.emoji || ''} ${r.name}`, saveLabel: 'Log it', build: b => {
+    b.append(h('p', { class: 'muted', style: 'font-size:14px' }, `${R.describeRule(r.cadence)} · last ${last ? D.humanDate(last, today) : 'never'}${r.streak ? ` · streak ${r.streak}` : ''}`));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('⏱️', 'Minutes', h('input', { type: 'number', min: 1, value: dur, style: 'width:64px', onchange: e => dur = Number(e.target.value) || null })));
+    if (r.pet_id) { const sel = h('select', { onchange: e => focus = e.target.value }, h('option', { value: '' }, 'Focus…'), ...['recall','heel','sit/stay','place','leash manners','crate','tricks','socialization'].map(f => h('option', { value: f }, f))); rows.append(srow('🎯', 'Focus', sel)); }
+    if (r.min_version) rows.append(srow('🪶', `Short version (${r.min_version})`, h('label', { class: 'toggle' }, h('input', { type: 'checkbox', onchange: e => { reduced = e.target.checked; if (reduced) dur = Math.min(dur, 5); } }), h('i'))));
+    b.append(rows, h('input', { class: 'big-input', style: 'margin-top:10px;font-size:15px', placeholder: 'Note (optional)', oninput: e => note = e.target.value }));
+    if (logs.length) { b.append(h('div', { class: 'sec-title' }, 'Recent')); logs.slice(0, 7).forEach(l => b.append(h('div', { class: 'faint', style: 'font-size:13px;padding:3px 4px' }, `${D.humanDate(D.dateOf(l.done_at, S.tz), today)} · ${l.duration_min ? l.duration_min + ' min' : ''}${l.detail?.focus ? ' · ' + l.detail.focus : ''}${l.note ? ' · ' + l.note : ''}`))); }
+    b.append(h('div', { style: 'display:flex;gap:8px;margin-top:16px' }, h('button', { class: 'btn btn-ghost', onclick: () => openRoutineEditor(r) }, 'Edit routine')));
+  }, onSave: async () => { await logRoutine(r.id, { duration_min: dur, detail: focus || reduced ? { focus: focus || undefined, reduced } : null, note }); } });
+}
+function openRoutineEditor(r) {
+  const isNew = !r; const x = r ? { ...r } : { name: '', emoji: '🔁', cadence: { freq: 'weekly' }, default_min: 15, importance: 'should', location: 'home', weather_dependent: false, min_version: '' };
+  openSheet({ title: isNew ? 'New routine' : 'Edit routine', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Routine name', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('😀', 'Emoji', h('input', { type: 'text', value: x.emoji || '', maxlength: 2, style: 'width:50px;text-align:right;background:none;border:none;font-size:18px', oninput: e => x.emoji = e.target.value })));
+    const repV = vtext(R.describeRule(x.cadence)); rows.append(srow('🔁', 'Cadence', repV, async () => { const v = await repeatPicker(x.cadence); if (v === undefined) return; x.cadence = v || { freq: 'weekly' }; repV.textContent = R.describeRule(x.cadence); }));
+    rows.append(srow('⏱️', 'Usual minutes', h('input', { type: 'number', value: x.default_min || '', style: 'width:64px', onchange: e => x.default_min = Number(e.target.value) || null })));
+    rows.append(srow('🪶', 'Short version', h('input', { type: 'text', value: x.min_version || '', placeholder: 'e.g. 3-minute session', style: 'text-align:right;background:none;border:none;font-size:14px;width:60%', oninput: e => x.min_version = e.target.value })));
+    const imp = h('select', { onchange: e => x.importance = e.target.value }, ...['must','should','nice'].map(v => h('option', { value: v, selected: x.importance === v }, v))); rows.append(srow('❗', 'Importance', imp));
+    const areaV = vtext(x.area_id ? areaLabel(x.area_id) : 'None'); rows.append(srow('📁', 'Area', areaV, async () => { const v = await pickOne('Area', [{ value: null, label: 'None' }, ...S.all('areas').map(a => ({ value: a.id, label: `${a.emoji || ''} ${a.name}` }))], x.area_id); x.area_id = v; areaV.textContent = v ? areaLabel(v) : 'None'; }));
+    rows.append(srow('🌦️', 'Needs dry weather', h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: x.weather_dependent, onchange: e => x.weather_dependent = e.target.checked }), h('i'))));
+    b.append(rows);
+    if (!isNew) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbUpdate('routines', r.id, { active: false }); toast('Routine archived'); } }, 'Archive routine'));
+  }, onSave: async () => {
+    if (!x.name.trim()) return false;
+    const patch = { name: x.name.trim(), emoji: x.emoji || null, cadence: x.cadence, default_min: x.default_min || null, importance: x.importance, area_id: x.area_id || null, weather_dependent: !!x.weather_dependent, min_version: x.min_version || null, location: x.location || 'home' };
+    if (isNew) await dbInsert('routines', { ...patch, active: true, streak: 0 }); else await dbUpdate('routines', r.id, patch);
+  } });
+}
+function openAreaEditor(a, kind = 'room') {
+  const x = a ? { ...a } : { name: '', emoji: '📁', kind };
+  openSheet({ title: a ? 'Edit area' : `New ${kind === 'room' ? 'room' : 'area'}`, build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Name', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    b.append(h('div', { class: 'rows' }, srow('😀', 'Emoji', h('input', { type: 'text', value: x.emoji, maxlength: 2, style: 'width:50px;text-align:right;background:none;border:none;font-size:18px', oninput: e => x.emoji = e.target.value })), srow('🏷️', 'Kind', h('select', { onchange: e => x.kind = e.target.value }, ...[['room','Room'],['life','Life'],['relationship','Relationship']].map(([v, l]) => h('option', { value: v, selected: x.kind === v }, l))))));
+  }, onSave: async () => { if (!x.name.trim()) return false; if (a) await dbUpdate('areas', a.id, { name: x.name.trim(), emoji: x.emoji, kind: x.kind }); else await dbInsert('areas', { name: x.name.trim(), emoji: x.emoji, kind: x.kind, sort: S.all('areas').length }); } });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOME — assets, maintenance, plants, Ruby, vendors & notes, lists
+// ═══════════════════════════════════════════════════════════════════════════
+renderers.home = function renderHome() {
+  const body = $('#home-body'); const sc = body.scrollTop; body.innerHTML = '';
+  const today = S.today();
+  const grid = h('div', { class: 'home-grid container' });
+
+  // Maintenance
+  const mc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '🔧 Maintenance'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openMaintenanceEditor() }, '+ Rule')));
+  const mb = h('div', { class: 'card-bd' });
+  const rules = S.all('maintenance_rules').filter(m => m.active !== false).sort((a, b) => (a.next_due || '9').localeCompare(b.next_due || '9'));
+  if (!rules.length) mb.append(h('div', { class: 'empty' }, 'No maintenance rules yet.'));
+  rules.forEach(m => {
+    const over = m.next_due && m.next_due < today, soon = m.next_due && !over && D.diffDays(today, m.next_due) <= 14;
+    const off = m.season_months?.length && !m.season_months.includes(D.monthOf(today));
+    mb.append(h('div', { class: 'row', onclick: () => openMaintenanceSheet(m) },
+      h('div', { class: 'ico' }, h('span', { class: 'status-dot ' + (off ? '' : over ? 'st-over' : soon ? 'st-soon' : 'st-ok'), style: off ? 'background:var(--border2)' : '' })),
+      h('div', { class: 'body' }, h('div', { class: 'title' }, m.name), h('div', { class: 'ctx', html: `${off ? 'Off-season' : m.next_due ? (over ? `<b style="color:var(--coral)">${D.diffDays(m.next_due, today)}d overdue</b>` : 'due ' + esc(D.humanDate(m.next_due, today))) : 'not scheduled'} · every ${m.interval_days}d${m.last_done_at ? ' · last ' + esc(D.humanDate(m.last_done_at, today)) : ''}` })),
+      h('div', { class: 'right' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: e => { e.stopPropagation(); recordMaintenance(m.id); } }, 'Done'), svgChev())));
+  });
+  mc.append(mb); grid.append(mc);
+
+  // Assets
+  const ac = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '🏗️ Equipment'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openAssetEditor() }, '+ Add')));
+  const ab = h('div', { class: 'card-bd' });
+  const assets = S.all('assets').sort((a, b) => a.name.localeCompare(b.name));
+  if (!assets.length) ab.append(h('div', { class: 'empty' }, 'Add your HVAC, water heater, appliances — with nameplate photos later.'));
+  assets.forEach(a => {
+    const cons = (a.consumables || []).map(c => `${c.name}: ${c.spec}`).join(' · ');
+    ab.append(h('div', { class: 'row', onclick: () => openAssetEditor(a) }, h('div', { class: 'ico' }, a.emoji || '🔧'), h('div', { class: 'body' }, h('div', { class: 'title' }, a.name), h('div', { class: 'ctx' }, [a.brand, a.model].filter(Boolean).join(' ') || cons || areaLabel(a.area_id) || '')), svgChev()));
+  });
+  ac.append(ab); grid.append(ac);
+
+  // Plants
+  const pc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '🌱 Plants & Hydro'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openPlantEditor() }, '+ Add')));
+  const pb = h('div', { class: 'card-bd' });
+  const C = ctx();
+  const plants = C.plants.filter(p => !p.archived);
+  if (!plants.length) pb.append(h('div', { class: 'empty' }, 'Track outdoor plants and the hydro unit.'));
+  plants.forEach(p => {
+    const lastW = p.last_water, days = lastW ? D.diffDays(lastW, today) : null;
+    const due = days != null && p.water_interval_days && days >= p.water_interval_days;
+    pb.append(h('div', { class: 'row', onclick: () => openPlantLogSheet(p) }, h('div', { class: 'ico' }, p.kind === 'hydroponic' ? '💧' : '🪴'), h('div', { class: 'body' }, h('div', { class: 'title' }, p.name), h('div', { class: 'ctx', html: `${esc(p.location || p.group_name || '')}${lastW ? ` · watered ${days}d ago` : ' · no log yet'}${due ? ' · <b style="color:var(--amber)">check</b>' : ''}` })), h('div', { class: 'right' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: e => { e.stopPropagation(); quickPlant(p, 'water'); } }, 'Watered'), svgChev())));
+  });
+  pc.append(pb); grid.append(pc);
+
+  // Ruby
+  S.all('pets').forEach(pet => {
+    const acts = S.all('pet_activities').filter(a => a.pet_id === pet.id).sort((a, b) => b.at.localeCompare(a.at));
+    const last7 = acts.filter(a => a.kind === 'training' && D.diffDays(D.dateOf(a.at, S.tz), today) < 7);
+    const focusCounts = {}; acts.filter(a => a.kind === 'training' && a.focus).slice(0, 30).forEach(a => focusCounts[a.focus] = (focusCounts[a.focus] || 0) + 1);
+    const rusty = ['recall','heel','sit/stay','place','leash manners'].filter(f => !acts.some(a => a.focus === f && D.diffDays(D.dateOf(a.at, S.tz), today) < 10));
+    const rc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, `🐾 ${pet.name}`), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => { const r = S.all('routines').find(r => r.pet_id === pet.id); r ? openRoutineSheet(r) : null; } }, '+ Log')));
+    const rb = h('div', { class: 'card-bd', style: 'padding:6px 16px 14px' });
+    rb.append(h('div', { style: 'display:flex;gap:18px;padding:6px 0 10px' }, stat(last7.length, 'sessions / 7d'), stat(mins(last7.reduce((a, x) => a + (x.duration_min || 0), 0)) || '0m', 'training / 7d'), stat(acts[0] ? D.humanDate(D.dateOf(acts[0].at, S.tz), today) : '—', 'last')));
+    if (rusty.length) rb.append(h('div', { class: 'note' }, `Not practiced lately: ${rusty.join(', ')}`));
+    acts.slice(0, 4).forEach(a => rb.append(h('div', { class: 'faint', style: 'font-size:13px;padding:4px 0' }, `${D.humanDate(D.dateOf(a.at, S.tz), today)} · ${a.kind}${a.duration_min ? ' · ' + a.duration_min + ' min' : ''}${a.focus ? ' · ' + a.focus : ''}${a.note ? ' · ' + a.note : ''}`)));
+    rc.append(rb); grid.append(rc);
+  });
+
+  // Vendors & notes
+  const nc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, '📇 Vendors & notes'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openNoteEditor() }, '+ Add')));
+  const nb = h('div', { class: 'card-bd' });
+  const notes = S.all('notes').sort((a, b) => (b.pinned - a.pinned) || a.title.localeCompare(b.title));
+  if (!notes.length) nb.append(h('div', { class: 'empty' }, 'Plumber, electrician, paint colors, filter sizes…'));
+  notes.forEach(n => nb.append(h('div', { class: 'row', onclick: () => openNoteEditor(n) }, h('div', { class: 'ico' }, n.vendor ? '🧰' : '📝'), h('div', { class: 'body' }, h('div', { class: 'title' }, n.title), h('div', { class: 'ctx' }, [n.phone, n.body].filter(Boolean).join(' · '))), n.phone ? h('a', { href: 'tel:' + n.phone.replace(/[^\d+]/g, ''), class: 'btn btn-ghost btn-sm', onclick: e => e.stopPropagation() }, 'Call') : svgChev())));
+  nc.append(nb); grid.append(nc);
+
+  // Lists
+  S.all('lists').filter(l => !l.archived).forEach(l => {
+    const items = S.all('list_items').filter(i => i.list_id === l.id).sort((a, b) => a.done - b.done || a.sort - b.sort);
+    const lc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, `🛒 ${l.name}`), h('span', { class: 'cnt' }, `${items.filter(i => !i.done).length} open`)));
+    const lb = h('div', { class: 'card-bd' });
+    items.forEach(i => { const chk = h('div', { class: 'check' + (i.done ? ' on' : '') }, svgCheck()); chk.onclick = () => dbUpdate('list_items', i.id, { done: !i.done }, { silent: true }); lb.append(h('div', { class: 'row no-line' + (i.done ? ' done' : ''), style: 'min-height:42px;padding:6px 10px' }, chk, h('div', { class: 'body' }, h('div', { class: 'title' }, i.text + (i.qty ? ` × ${i.qty}` : ''))), h('button', { class: 'icon-btn', style: 'width:30px;height:30px', onclick: () => dbRemove('list_items', i.id, { silent: true }) }, '×'))); });
+    const inp = h('input', { class: 'chip', style: 'width:100%;margin:6px 0 4px;font-weight:500', placeholder: 'Add item…', onkeydown: async e => { if (e.key === 'Enter' && e.target.value.trim()) { await dbInsert('list_items', { list_id: l.id, text: e.target.value.trim(), sort: items.length }, { silent: true }); e.target.value = ''; } } });
+    lb.append(h('div', { style: 'padding:0 6px' }, inp)); lc.append(lb); grid.append(lc);
+  });
+  body.append(grid); body.scrollTop = sc;
+};
+function stat(v, l) { return h('div', {}, h('div', { class: 'display', style: 'font-size:22px' }, v), h('div', { class: 'faint', style: 'font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em' }, l)); }
+async function quickPlant(p, kind) { await dbInsert('plant_observations', { plant_id: p.id, at: new Date().toISOString(), kind }, { silent: true }); toast(`${p.name}: ${kind}`); }
+
+function openMaintenanceSheet(m) {
+  const today = S.today(); let done = today, note = '', cost = null;
+  const logs = S.all('maintenance_log').filter(l => l.rule_id === m.id || (m.asset_id && l.asset_id === m.asset_id)).sort((a, b) => b.done_at.localeCompare(a.done_at));
+  const asset = S.get('assets', m.asset_id);
+  openSheet({ title: m.name, saveLabel: 'Record done', build: b => {
+    b.append(h('p', { class: 'muted', style: 'font-size:14px' }, `Every ${m.interval_days} days${asset ? ` · ${asset.name}` : ''}${m.next_due ? ` · next due ${D.humanDate(m.next_due, today)}` : ''}`));
+    if (m.instructions) b.append(h('div', { class: 'note', style: 'margin-top:8px' }, m.instructions));
+    if (asset?.consumables?.length) b.append(h('div', { class: 'note', style: 'margin-top:8px' }, asset.consumables.map(c => `${c.name}: ${c.spec}`).join(' · ')));
+    b.append(h('div', { class: 'rows' }, srow('📅', 'Done on', h('input', { type: 'date', value: done, max: today, onchange: e => done = e.target.value })), srow('💵', 'Cost', h('input', { type: 'number', placeholder: '0', style: 'width:80px', onchange: e => cost = Number(e.target.value) || null }))));
+    b.append(h('input', { class: 'big-input', style: 'margin-top:10px;font-size:15px', placeholder: 'Note (filter size, what you noticed…)', oninput: e => note = e.target.value }));
+    if (logs.length) { b.append(h('div', { class: 'sec-title' }, 'History')); logs.slice(0, 8).forEach(l => b.append(h('div', { class: 'faint', style: 'font-size:13px;padding:3px 4px' }, `${l.done_at}${l.note ? ' · ' + l.note : ''}${l.cost ? ' · ' + money(l.cost) : ''}`))); if (logs.length >= 2) { const gaps = []; for (let i = 0; i < logs.length - 1; i++) gaps.push(D.diffDays(logs[i + 1].done_at, logs[i].done_at)); const med = gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)]; if (Math.abs(med - m.interval_days) > m.interval_days * 0.2) b.append(h('div', { class: 'note', style: 'margin-top:8px' }, `Real interval has been ~${med} days vs the ${m.interval_days}-day rule. Edit the rule if that's the new normal.`)); } }
+    b.append(h('div', { style: 'display:flex;gap:8px;margin-top:16px' }, h('button', { class: 'btn btn-ghost', onclick: () => openMaintenanceEditor(m) }, 'Edit rule')));
+  }, onSave: async () => { await recordMaintenance(m.id, { done_at: done, note, cost }); } });
+}
+function openMaintenanceEditor(m) {
+  const x = m ? { ...m } : { name: '', interval_days: 90, importance: 'should', instructions: '', asset_id: null, next_due: S.today() };
+  openSheet({ title: m ? 'Edit rule' : 'New maintenance rule', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'e.g. Replace HVAC filter', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('🔁', 'Every (days)', h('input', { type: 'number', min: 1, value: x.interval_days, style: 'width:70px', onchange: e => x.interval_days = Number(e.target.value) || 30 })));
+    rows.append(srow('📅', 'Next due', h('input', { type: 'date', value: x.next_due || '', onchange: e => x.next_due = e.target.value || null })));
+    const aV = vtext(x.asset_id ? S.get('assets', x.asset_id)?.name : 'None'); rows.append(srow('🏗️', 'Equipment', aV, async () => { const v = await pickOne('Equipment', [{ value: null, label: 'None' }, ...S.all('assets').map(a => ({ value: a.id, label: `${a.emoji || ''} ${a.name}` }))], x.asset_id); x.asset_id = v; aV.textContent = v ? S.get('assets', v)?.name : 'None'; }));
+    rows.append(srow('❗', 'Importance', h('select', { onchange: e => x.importance = e.target.value }, ...['must','should','nice'].map(v => h('option', { value: v, selected: x.importance === v }, v)))));
+    const seasons = h('input', { type: 'text', placeholder: 'e.g. 4-10', value: x.season_months?.length ? `${x.season_months[0]}-${x.season_months[x.season_months.length - 1]}` : '', style: 'text-align:right;background:none;border:none;width:90px', onchange: e => { const m2 = e.target.value.match(/(\d+)\s*-\s*(\d+)/); x.season_months = m2 ? Array.from({ length: Number(m2[2]) - Number(m2[1]) + 1 }, (_, i) => Number(m2[1]) + i) : null; } });
+    rows.append(srow('🗓️', 'Months active', seasons));
+    b.append(rows, h('textarea', { class: 'big-input', style: 'margin-top:10px', placeholder: 'Instructions', oninput: e => x.instructions = e.target.value }, x.instructions || ''));
+    if (m) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbUpdate('maintenance_rules', m.id, { active: false }); toast('Rule archived'); } }, 'Archive rule'));
+  }, onSave: async () => { if (!x.name.trim()) return false; const patch = { name: x.name.trim(), interval_days: x.interval_days, next_due: x.next_due, asset_id: x.asset_id, importance: x.importance, instructions: x.instructions || null, season_months: x.season_months || null }; if (m) await dbUpdate('maintenance_rules', m.id, patch); else await dbInsert('maintenance_rules', { ...patch, active: true }); } });
+}
+function openAssetEditor(a) {
+  const x = a ? { ...a, consumables: [...(a.consumables || [])] } : { name: '', emoji: '🔧', brand: '', model: '', serial: '', consumables: [], notes: '', area_id: null, warranty_until: null };
+  openSheet({ title: a ? a.name : 'New equipment', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Name (e.g. Water heater)', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('😀', 'Emoji', h('input', { type: 'text', value: x.emoji || '', maxlength: 2, style: 'width:50px;text-align:right;background:none;border:none;font-size:18px', oninput: e => x.emoji = e.target.value })));
+    ['brand','model','serial'].forEach(k => rows.append(srow('🔤', k[0].toUpperCase() + k.slice(1), h('input', { type: 'text', value: x[k] || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x[k] = e.target.value }))));
+    const aV = vtext(x.area_id ? areaLabel(x.area_id) : 'None'); rows.append(srow('📁', 'Area', aV, async () => { const v = await pickOne('Area', [{ value: null, label: 'None' }, ...S.all('areas').map(ar => ({ value: ar.id, label: `${ar.emoji || ''} ${ar.name}` }))], x.area_id); x.area_id = v; aV.textContent = v ? areaLabel(v) : 'None'; }));
+    rows.append(srow('🛡️', 'Warranty until', h('input', { type: 'date', value: x.warranty_until || '', onchange: e => x.warranty_until = e.target.value || null })));
+    b.append(rows);
+    b.append(h('div', { class: 'sec-title' }, 'Consumables / filters', h('button', { class: 'link', onclick: () => { x.consumables.push({ name: '', spec: '' }); renderCons(); } }, '+ Add')));
+    const consEl = h('div'); b.append(consEl);
+    const renderCons = () => { consEl.innerHTML = ''; x.consumables.forEach((c, i) => consEl.append(h('div', { class: 'frow', style: 'margin-bottom:6px' }, h('input', { class: 'chip', style: 'font-weight:500', placeholder: 'Filter', value: c.name, oninput: e => c.name = e.target.value }), h('input', { class: 'chip', style: 'font-weight:500', placeholder: '16×25×1 MERV-11', value: c.spec, oninput: e => c.spec = e.target.value })))); };
+    renderCons();
+    b.append(h('textarea', { class: 'big-input', style: 'margin-top:10px', placeholder: 'Notes', oninput: e => x.notes = e.target.value }, x.notes || ''));
+    if (a) { const rules = S.all('maintenance_rules').filter(r => r.asset_id === a.id && r.active !== false); if (rules.length) { b.append(h('div', { class: 'sec-title' }, 'Maintenance')); rules.forEach(r => b.append(h('div', { class: 'faint', style: 'font-size:13px;padding:3px 4px' }, `${r.name} · every ${r.interval_days}d · next ${r.next_due || '—'}`))); } b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { if (await confirmSheet('Remove equipment?', 'Maintenance rules linked to it are kept.')) { await dbRemove('assets', a.id); } } }, 'Remove')); }
+  }, onSave: async () => { if (!x.name.trim()) return false; const patch = { name: x.name.trim(), emoji: x.emoji || null, brand: x.brand || null, model: x.model || null, serial: x.serial || null, area_id: x.area_id, warranty_until: x.warranty_until, consumables: x.consumables.filter(c => c.name || c.spec), notes: x.notes || null }; if (a) await dbUpdate('assets', a.id, patch); else await dbInsert('assets', patch); } });
+}
+function openNoteEditor(n) {
+  const x = n ? { ...n } : { title: '', body: '', vendor: false, phone: '', url: '', pinned: false };
+  openSheet({ title: n ? 'Note' : 'New note / vendor', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Title', value: x.title, autofocus: true, oninput: e => x.title = e.target.value }));
+    b.append(h('textarea', { class: 'big-input', style: 'margin-top:8px;min-height:100px', placeholder: 'Details, paint codes, filter sizes, what they charged…', oninput: e => x.body = e.target.value }, x.body || ''));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('🧰', 'Vendor', h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: x.vendor, onchange: e => x.vendor = e.target.checked }), h('i'))));
+    rows.append(srow('📞', 'Phone', h('input', { type: 'tel', value: x.phone || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x.phone = e.target.value })));
+    rows.append(srow('🔗', 'Link', h('input', { type: 'url', value: x.url || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x.url = e.target.value })));
+    rows.append(srow('📌', 'Pinned', h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: x.pinned, onchange: e => x.pinned = e.target.checked }), h('i'))));
+    b.append(rows);
+    if (n) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbRemove('notes', n.id); toast('Deleted'); } }, 'Delete'));
+  }, onSave: async () => { if (!x.title.trim()) return false; const patch = { title: x.title.trim(), body: x.body || null, vendor: !!x.vendor, phone: x.phone || null, url: x.url || null, pinned: !!x.pinned }; if (n) await dbUpdate('notes', n.id, patch); else await dbInsert('notes', patch); } });
+}
+function openPlantEditor(p) {
+  const x = p ? { ...p } : { name: '', kind: 'outdoor', location: '', container: '', group_name: '', water_interval_days: null };
+  openSheet({ title: p ? p.name : 'New plant', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Name', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('🌱', 'Kind', h('select', { onchange: e => x.kind = e.target.value }, ...[['outdoor','Outdoor'],['indoor','Indoor'],['hydroponic','Hydroponic']].map(([v, l]) => h('option', { value: v, selected: x.kind === v }, l)))));
+    ['location','container','group_name','species'].forEach(k => rows.append(srow('🔤', k.replace('_', ' ')[0].toUpperCase() + k.replace('_', ' ').slice(1), h('input', { type: 'text', value: x[k] || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x[k] = e.target.value }))));
+    rows.append(srow('💧', 'Check every (days)', h('input', { type: 'number', value: x.water_interval_days || '', style: 'width:64px', placeholder: 'auto', onchange: e => x.water_interval_days = Number(e.target.value) || null })));
+    b.append(rows);
+    if (p) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbUpdate('plants', p.id, { archived: true }); } }, 'Archive'));
+  }, onSave: async () => { if (!x.name.trim()) return false; const patch = { name: x.name.trim(), kind: x.kind, location: x.location || null, container: x.container || null, group_name: x.group_name || null, species: x.species || null, water_interval_days: x.water_interval_days }; if (p) await dbUpdate('plants', p.id, patch); else await dbInsert('plants', patch); } });
+}
+function openPlantLogSheet(p) {
+  let kind = 'water', soil = '', note = '', ph = null, ec = null, level = '';
+  const obs = S.all('plant_observations').filter(o => o.plant_id === p.id).sort((a, b) => b.at.localeCompare(a.at));
+  openSheet({ title: p.name, saveLabel: 'Log', build: b => {
+    const kinds = p.kind === 'hydroponic' ? ['topoff','nutrient','clean','observe','harvest','ph_ec'] : ['water','fertilize','prune','repot','observe','harvest'];
+    const ch = h('div', { class: 'chips' }); kinds.forEach(k => { const btn = h('button', { class: k === kind ? 'active' : '' }, k.replace('_', '/')); btn.onclick = () => { kind = k; $$('button', ch).forEach(x => x.classList.toggle('active', x === btn)); }; ch.append(btn); }); b.append(ch);
+    const rows = h('div', { class: 'rows' });
+    if (p.kind !== 'hydroponic') rows.append(srow('🪨', 'Soil', h('select', { onchange: e => soil = e.target.value }, h('option', { value: '' }, '—'), ...['dry','moist','wet'].map(v => h('option', { value: v }, v)))));
+    else { rows.append(srow('🧪', 'pH', h('input', { type: 'number', step: '0.1', style: 'width:70px', onchange: e => ph = Number(e.target.value) || null }))); rows.append(srow('⚡', 'EC', h('input', { type: 'number', step: '0.01', style: 'width:70px', onchange: e => ec = Number(e.target.value) || null }))); rows.append(srow('🌊', 'Water level', h('select', { onchange: e => level = e.target.value }, h('option', { value: '' }, '—'), ...['full','ok','low','empty'].map(v => h('option', { value: v }, v))))); }
+    b.append(rows, h('input', { class: 'big-input', style: 'margin-top:10px;font-size:15px', placeholder: 'Observation', oninput: e => note = e.target.value }));
+    if (obs.length) { b.append(h('div', { class: 'sec-title' }, 'History')); obs.slice(0, 8).forEach(o => b.append(h('div', { class: 'faint', style: 'font-size:13px;padding:3px 4px' }, `${D.humanDate(D.dateOf(o.at, S.tz), S.today())} · ${o.kind}${o.soil_state ? ' · ' + o.soil_state : ''}${o.ph ? ' · pH ' + o.ph : ''}${o.note ? ' · ' + o.note : ''}`))); }
+    b.append(h('div', { style: 'display:flex;gap:8px;margin-top:16px' }, h('button', { class: 'btn btn-ghost', onclick: () => openPlantEditor(p) }, 'Edit plant')));
+  }, onSave: async () => { await dbInsert('plant_observations', { plant_id: p.id, at: new Date().toISOString(), kind: kind === 'ph_ec' ? 'observe' : kind, soil_state: soil || null, ph, ec, water_level: level || null, note: note || null }, { silent: true }); toast(`${p.name}: ${kind}`); } });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROJECTS
+// ═══════════════════════════════════════════════════════════════════════════
+const PS = { id: null, tab: 'steps' };
+renderers.projects = function renderProjects(params) {
+  if (params?.id) PS.id = params.id;
+  const root = $('#proj-layout'); const sc = $('.proj-main .scroll', root)?.scrollTop || 0; root.innerHTML = '';
+  const projects = S.all('projects').sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || a.priority - b.priority);
+  if (!PS.id && !isPhone() && projects[0]) PS.id = projects[0].id;
+  const side = h('div', { class: 'proj-side' + (isPhone() && !PS.id ? ' mobile-show' : '') });
+  side.append(h('div', { class: 'list-hd' }, h('h2', {}, 'Projects'), h('button', { class: 'btn btn-primary btn-sm', onclick: () => openProjectEditor() }, '+ New')));
+  const ss = h('div', { class: 'scroll', style: 'padding:0 10px 120px' });
+  projects.forEach(p => { const pct = projectProgress(p.id); const next = P.nextStepOf(p.id, ctx()); const it = h('div', { class: 'proj-item' + (PS.id === p.id ? ' active' : ''), onclick: () => { PS.id = p.id; renderers.projects(); } }, h('div', { class: 'nm' }, h('span', {}, p.name), h('span', { class: 'pri' }, p.status === 'active' ? `P${p.priority}` : p.status)), h('div', { class: 'st' }, next ? `Next: ${next.title}` : p.status === 'done' ? 'Complete' : 'No steps yet'), h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` }))); ss.append(it); });
+  side.append(ss);
+  const main = h('div', { class: 'proj-main' + (isPhone() && !PS.id ? ' mobile-hide' : '') });
+  const p = projOf(PS.id);
+  if (!p) main.append(h('div', { class: 'empty', style: 'padding-top:80px' }, h('div', { class: 'big' }, '📐'), 'Pick a project'));
+  else {
+    const steps = S.all('project_steps').filter(s => s.project_id === p.id).sort((a, b) => a.sort - b.sort);
+    const costs = S.all('project_costs').filter(c => c.project_id === p.id);
+    const pct = projectProgress(p.id); const C = ctx(); const next = P.nextStepOf(p.id, C);
+    const hd = h('div', { class: 'list-hd', style: 'align-items:flex-start' });
+    if (isPhone()) hd.append(h('button', { class: 'icon-btn', onclick: () => { PS.id = null; renderers.projects(); } }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>' })));
+    hd.append(h('div', { style: 'flex:1;min-width:0' }, h('h2', {}, p.name), h('div', { class: 'faint', style: 'font-size:13px;margin-top:2px' }, [p.status === 'active' ? `Priority ${p.priority}` : p.status, p.stage, p.target_date ? `target ${D.humanDate(p.target_date, S.today())}` : null, areaLabel(p.area_id)].filter(Boolean).join(' · '))), h('div', { style: 'text-align:right' }, h('div', { class: 'display', style: 'font-size:26px;color:var(--violet)' }, `${pct}%`), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openProjectEditor(p) }, 'Edit')));
+    main.append(hd);
+    const sc2 = h('div', { class: 'scroll', style: 'flex:1;padding:0 20px 140px' });
+    if (p.description) sc2.append(h('p', { class: 'muted', style: 'font-size:14.5px;margin:0 0 14px' }, p.description));
+    if (next) sc2.append(h('div', { class: 'card', style: 'margin-bottom:16px;border-color:rgba(109,91,208,.35)' }, h('div', { class: 'card-bd', style: 'padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap' }, h('div', { style: 'flex:1;min-width:200px' }, h('div', { class: 'faint', style: 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em' }, 'Next action'), h('div', { style: 'font-weight:600;font-size:16px' }, next.title), h('div', { class: 'faint', style: 'font-size:12.5px' }, [next.phase, next.est_min ? mins(next.est_min) : null].filter(Boolean).join(' · '))), h('button', { class: 'btn btn-primary btn-sm', onclick: () => scheduleStep(next) }, 'Block time'), h('button', { class: 'btn btn-ghost btn-sm', onclick: () => completeStep(next.id) }, 'Done'))));
+    // steps
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, `Steps · ${steps.filter(s => s.status === 'done').length}/${steps.length}`), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openStepEditor(null, p) }, '+ Step')));
+    const bd = h('div', { class: 'card-bd' }); let lastPhase = null;
+    steps.forEach(s => {
+      if (s.phase !== lastPhase) { bd.append(h('div', { class: 'phase-lbl' }, s.phase || 'Steps')); lastPhase = s.phase; }
+      const blocked = !(s.depends_on || []).every(id => { const d = S.get('project_steps', id); return !d || d.status === 'done' || d.status === 'skipped'; });
+      const done = s.status === 'done' || s.status === 'skipped';
+      const chk = h('div', { class: 'check' + (done ? ' on' : ''), title: blocked ? 'Blocked by earlier steps' : '' }, svgCheck()); chk.onclick = e => { e.stopPropagation(); completeStep(s.id, !done); };
+      const deps = (s.depends_on || []).map(id => S.get('project_steps', id)).filter(d => d && d.status !== 'done').map(d => d.title);
+      bd.append(h('div', { class: 'step' + (done ? ' done' : '') + (blocked && !done ? ' blocked' : ''), onclick: () => openStepEditor(s, p) }, chk, h('div', { style: 'flex:1;min-width:0' }, h('div', { class: 't' }, s.title), h('div', { class: 'm' }, [s.est_min ? mins(s.est_min) : null, done && s.done_at ? `done ${D.humanDate(D.dateOf(s.done_at, S.tz), S.today())}` : null, deps.length ? `after: ${deps.join(', ')}` : null, s.note].filter(Boolean).join(' · '))), svgChev()));
+    });
+    if (!steps.length) bd.append(h('div', { class: 'empty' }, 'Break it into steps — HomeBase plans from the next unblocked one.'));
+    card.append(bd); sc2.append(card);
+    // costs
+    const tp = costs.reduce((a, c) => a + (Number(c.projected) || 0), 0), ta = costs.reduce((a, c) => a + (Number(c.actual) || 0), 0);
+    const cc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Costs'), h('div', { style: 'display:flex;gap:8px;align-items:center' }, p.budget ? h('span', { class: 'tag ' + (ta > p.budget ? 'coral' : 'sage') }, `${money(ta)} of ${money(p.budget)}`) : null, h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openCostEditor(null, p) }, '+ Item'))));
+    if (costs.length) { const tb = h('table', { class: 'costs' }, h('thead', {}, h('tr', {}, h('th', {}, 'Item'), h('th', {}, 'Qty'), h('th', { class: 'num' }, 'Planned'), h('th', { class: 'num' }, 'Actual'))), h('tbody', {}, ...costs.map(c => h('tr', { style: 'cursor:pointer', onclick: () => openCostEditor(c, p) }, h('td', {}, c.item), h('td', { class: 'faint' }, c.qty || ''), h('td', { class: 'num' }, money(c.projected)), h('td', { class: 'num', style: c.actual != null ? 'color:var(--sage)' : '' }, money(c.actual))))), h('tfoot', {}, h('tr', {}, h('td', { colspan: 2 }, 'Total'), h('td', { class: 'num' }, money(tp)), h('td', { class: 'num' }, money(ta))))); cc.append(h('div', { style: 'padding:0 8px 8px;overflow-x:auto' }, tb)); } else cc.append(h('div', { class: 'empty' }, 'Materials and purchases go here.'));
+    sc2.append(cc);
+    // linked tasks & notes
+    const linked = S.all('tasks').filter(t => t.project_id === p.id && t.status === 'open'); const pnotes = S.all('notes').filter(n => n.project_id === p.id);
+    if (linked.length || pnotes.length) { const lc = h('div', { class: 'card', style: 'margin-top:16px' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Linked'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openTaskEditor(null, { project_id: p.id, area_id: p.area_id }) }, '+ Task'))); const lb = h('div', { class: 'card-bd' }); linked.forEach(t => lb.append(taskRow(t))); pnotes.forEach(n => lb.append(h('div', { class: 'row', onclick: () => openNoteEditor(n) }, h('div', { class: 'ico' }, '📝'), h('div', { class: 'body' }, h('div', { class: 'title' }, n.title), h('div', { class: 'ctx' }, n.body || '')), svgChev()))); lc.append(lb); sc2.append(lc); }
+    else sc2.append(h('div', { style: 'margin-top:12px;display:flex;gap:8px' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: () => openTaskEditor(null, { project_id: p.id, area_id: p.area_id }) }, '+ Linked task'), h('button', { class: 'btn btn-ghost btn-sm', onclick: () => openNoteEditor({ title: '', body: '', project_id: p.id }) }, '+ Note')));
+    main.append(sc2);
+  }
+  root.append(side, main); const s2 = $('.proj-main .scroll', root); if (s2) s2.scrollTop = sc;
+};
+function openProjectEditor(p) {
+  const x = p ? { ...p } : { name: '', priority: S.all('projects').filter(q => q.status === 'active').length + 1, status: 'active', stage: '', description: '', budget: null, area_id: null, target_date: null };
+  openSheet({ title: p ? 'Edit project' : 'New project', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Project name', value: x.name, autofocus: true, oninput: e => x.name = e.target.value }));
+    b.append(h('textarea', { class: 'big-input', style: 'margin-top:8px', placeholder: 'What done looks like', oninput: e => x.description = e.target.value }, x.description || ''));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('🏆', 'Priority', h('input', { type: 'number', min: 1, max: 9, value: x.priority, style: 'width:60px', onchange: e => x.priority = Number(e.target.value) || 9 })));
+    rows.append(srow('🚦', 'Status', h('select', { onchange: e => x.status = e.target.value }, ...['active','paused','idea','done'].map(v => h('option', { value: v, selected: x.status === v }, v)))));
+    rows.append(srow('📍', 'Stage', h('input', { type: 'text', value: x.stage || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x.stage = e.target.value })));
+    rows.append(srow('💵', 'Budget', h('input', { type: 'number', value: x.budget || '', style: 'width:90px', onchange: e => x.budget = Number(e.target.value) || null })));
+    rows.append(srow('🎯', 'Target', h('input', { type: 'date', value: x.target_date || '', onchange: e => x.target_date = e.target.value || null })));
+    const aV = vtext(x.area_id ? areaLabel(x.area_id) : 'None'); rows.append(srow('📁', 'Area', aV, async () => { const v = await pickOne('Area', [{ value: null, label: 'None' }, ...S.all('areas').map(a => ({ value: a.id, label: `${a.emoji || ''} ${a.name}` }))], x.area_id); x.area_id = v; aV.textContent = v ? areaLabel(v) : 'None'; }));
+    b.append(rows);
+    if (!p) b.append(h('p', { class: 'faint', style: 'font-size:12.5px;margin-top:12px' }, 'Tip: after creating it, ask HomeBase “break the fence project into steps” and it will draft the step list with dependencies.'));
+    if (p) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { if (await confirmSheet('Delete project?', 'Steps and costs go with it. Tasks linked to it stay.')) { await dbRemove('projects', p.id); PS.id = null; } } }, 'Delete project'));
+  }, onSave: async () => { if (!x.name.trim()) return false; const patch = { name: x.name.trim(), description: x.description || null, priority: x.priority, status: x.status, stage: x.stage || null, budget: x.budget, target_date: x.target_date, area_id: x.area_id, completed_at: x.status === 'done' ? (p?.completed_at || new Date().toISOString()) : null }; if (p) await dbUpdate('projects', p.id, patch); else { const np = await dbInsert('projects', { ...patch, start_date: S.today() }); PS.id = np.id; } } });
+}
+function openStepEditor(s, p) {
+  const steps = S.all('project_steps').filter(x => x.project_id === p.id).sort((a, b) => a.sort - b.sort);
+  const x = s ? { ...s, depends_on: [...(s.depends_on || [])] } : { title: '', phase: steps[steps.length - 1]?.phase || '', est_min: 60, note: '', depends_on: steps.length ? [steps[steps.length - 1].id] : [], sort: steps.length };
+  openSheet({ title: s ? 'Step' : 'New step', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Step', value: x.title, autofocus: true, oninput: e => x.title = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('🏷️', 'Phase', h('input', { type: 'text', value: x.phase || '', list: 'phases', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x.phase = e.target.value })));
+    rows.append(srow('⏱️', 'Estimate (min)', h('input', { type: 'number', value: x.est_min || '', style: 'width:70px', onchange: e => x.est_min = Number(e.target.value) || null })));
+    const depV = vtext(x.depends_on.length ? `${x.depends_on.length} step${x.depends_on.length > 1 ? 's' : ''}` : 'None');
+    rows.append(srow('⛓️', 'Depends on', depV, () => { const others = steps.filter(o => o.id !== s?.id); openSheetNested('Depends on', bb => { others.forEach(o => { const on = x.depends_on.includes(o.id); const it = h('div', { class: 'picker-item' + (on ? ' sel' : '') }, h('div', { class: 'check' + (on ? ' on' : '') }, svgCheck()), h('div', {}, o.title)); it.onclick = () => { const i = x.depends_on.indexOf(o.id); if (i >= 0) x.depends_on.splice(i, 1); else x.depends_on.push(o.id); it.classList.toggle('sel'); $('.check', it).classList.toggle('on'); }; bb.append(it); }); }, () => { depV.textContent = x.depends_on.length ? `${x.depends_on.length} step${x.depends_on.length > 1 ? 's' : ''}` : 'None'; }); }));
+    b.append(rows, h('input', { class: 'big-input', style: 'margin-top:10px;font-size:15px', placeholder: 'Note', value: x.note || '', oninput: e => x.note = e.target.value }));
+    if (s) b.append(h('div', { style: 'display:flex;gap:8px;margin-top:16px;flex-wrap:wrap' }, h('button', { class: 'btn btn-ghost', onclick: () => { closeSheet(); scheduleStep(s); } }, 'Block time'), s.status !== 'skipped' ? h('button', { class: 'btn btn-ghost', onclick: async () => { closeSheet(); await dbUpdate('project_steps', s.id, { status: 'skipped', done_at: new Date().toISOString() }); } }, 'Skip') : null, h('button', { class: 'btn btn-danger', style: 'margin-left:auto', onclick: async () => { closeSheet(); await dbRemove('project_steps', s.id); } }, 'Delete')));
+  }, onSave: async () => { if (!x.title.trim()) return false; const patch = { title: x.title.trim(), phase: x.phase || null, est_min: x.est_min, note: x.note || null, depends_on: x.depends_on }; if (s) await dbUpdate('project_steps', s.id, patch); else await dbInsert('project_steps', { ...patch, project_id: p.id, sort: x.sort, status: 'todo' }); } });
+}
+function openCostEditor(c, p) {
+  const x = c ? { ...c } : { item: '', qty: '', projected: null, actual: null, vendor: '' };
+  openSheet({ title: c ? 'Cost item' : 'New cost item', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Item', value: x.item, autofocus: true, oninput: e => x.item = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('#️⃣', 'Qty', h('input', { type: 'text', value: x.qty || '', style: 'text-align:right;background:none;border:none;width:80px', oninput: e => x.qty = e.target.value })));
+    rows.append(srow('📐', 'Planned $', h('input', { type: 'number', value: x.projected ?? '', style: 'width:90px', onchange: e => x.projected = e.target.value === '' ? null : Number(e.target.value) })));
+    rows.append(srow('🧾', 'Actual $', h('input', { type: 'number', value: x.actual ?? '', style: 'width:90px', onchange: e => x.actual = e.target.value === '' ? null : Number(e.target.value) })));
+    rows.append(srow('🏪', 'Vendor', h('input', { type: 'text', value: x.vendor || '', style: 'text-align:right;background:none;border:none;width:60%', oninput: e => x.vendor = e.target.value })));
+    b.append(rows);
+    if (c) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbRemove('project_costs', c.id); } }, 'Delete'));
+  }, onSave: async () => { if (!x.item.trim()) return false; const patch = { item: x.item.trim(), qty: x.qty || null, projected: x.projected, actual: x.actual, vendor: x.vendor || null }; if (c) await dbUpdate('project_costs', c.id, patch); else await dbInsert('project_costs', { ...patch, project_id: p.id }); } });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CALENDAR
+// ═══════════════════════════════════════════════════════════════════════════
+const CS = { mode: 'month', y: null, m: null, day: null };
+const MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+renderers.calendar = function renderCalendar(params) {
+  const today = S.today();
+  if (params?.date) { CS.day = params.date; CS.y = Number(params.date.slice(0, 4)); CS.m = Number(params.date.slice(5, 7)) - 1; if (CS.mode === 'month') CS.mode = 'week'; }
+  if (CS.y == null) { CS.y = Number(today.slice(0, 4)); CS.m = Number(today.slice(5, 7)) - 1; CS.day = today; if (isPhone()) CS.mode = 'list'; }
+  const root = $('#cal-root'); root.innerHTML = '';
+  const tb = h('div', { class: 'cal-tb' });
+  const title = h('h2');
+  tb.append(h('button', { class: 'icon-btn', onclick: () => calNav(-1) }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>' })), title, h('button', { class: 'icon-btn', onclick: () => calNav(1) }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' })), h('button', { class: 'btn btn-ghost btn-sm', onclick: () => { CS.y = Number(today.slice(0, 4)); CS.m = Number(today.slice(5, 7)) - 1; CS.day = today; renderers.calendar(); } }, 'Today'));
+  const seg = h('div', { class: 'seg', style: 'margin-left:auto' }); ['month','week','list'].forEach(m => seg.append(h('button', { class: CS.mode === m ? 'active' : '', onclick: () => { CS.mode = m; renderers.calendar(); } }, m[0].toUpperCase() + m.slice(1))));
+  tb.append(seg, h('button', { class: 'btn btn-primary btn-sm', onclick: () => openEventEditor(null, { date: CS.day || today }) }, '+ Event'));
+  root.append(tb);
+  const C = ctx();
+  if (CS.mode === 'month') {
+    title.textContent = `${MN[CS.m]} ${CS.y}`;
+    const first = `${CS.y}-${String(CS.m + 1).padStart(2, '0')}-01`; const fdow = D.DOW.indexOf(D.dow(first)); const start = D.addDays(first, -fdow);
+    const wrap = h('div', { class: 'cal-month' }); wrap.append(h('div', { class: 'cal-dn' }, ...['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => h('div', {}, d))));
+    const grid = h('div', { class: 'cal-grid' });
+    for (let i = 0; i < 42; i++) {
+      const d = D.addDays(start, i); const other = Number(d.slice(5, 7)) - 1 !== CS.m; const items = dayItems(d, C);
+      const cell = h('div', { class: 'cal-cell' + (other ? ' other' : '') + (d === today ? ' today' : ''), onclick: () => { CS.day = d; CS.mode = 'week'; renderers.calendar(); } });
+      const mode = P.modeFor(d, C); cell.append(h('div', { style: 'display:flex;justify-content:space-between;align-items:baseline' }, h('span', { class: 'n' }, Number(d.slice(8))), mode.mode !== 'normal' ? h('span', { class: 'mode' }, mode.mode) : (S.weather[d] && S.weather[d].rain_prob >= 50 ? h('span', { style: 'font-size:10px' }, '🌧') : null)));
+      const max = isPhone() ? 2 : 4;
+      items.slice(0, max).forEach(it => cell.append(h('div', { class: 'cev ' + it.cls }, it.label)));
+      if (items.length > max) cell.append(h('div', { class: 'cev more' }, `+${items.length - max}`));
+      grid.append(cell);
+    }
+    wrap.append(grid); root.append(wrap);
+  } else if (CS.mode === 'week') {
+    const ws = D.addDays(CS.day, -D.DOW.indexOf(D.dow(CS.day)));
+    title.textContent = `${D.humanDate(ws)} – ${D.humanDate(D.addDays(ws, 6))}`;
+    const wrap = h('div', { class: 'cal-week scroll' });
+    for (let i = 0; i < 7; i++) {
+      const d = D.addDays(ws, i); const items = dayItems(d, C, true); const mode = P.modeFor(d, C);
+      const col = h('div', { class: 'cal-day-col' + (d === today ? ' today' : '') });
+      col.append(h('div', { class: 'hd', onclick: () => openDayModeSheet(d), style: 'cursor:pointer' }, h('b', {}, Number(d.slice(8))), h('span', {}, D.dow(d)), mode.mode !== 'normal' ? h('span', { class: 'tag should', style: 'margin-left:auto' }, mode.mode) : (S.weather[d] ? h('span', { style: 'margin-left:auto;font-size:11px;color:var(--text3)' }, `${S.weather[d].tmax_f}° ${S.weather[d].rain_prob >= 30 ? S.weather[d].rain_prob + '%🌧' : ''}`) : null)));
+      const bd = h('div', { class: 'bd' });
+      if (!items.length) bd.append(h('div', { class: 'faint', style: 'font-size:12px;padding:6px 8px' }, 'Free'));
+      items.forEach(it => bd.append(h('div', { class: 'cal-item', onclick: it.open }, it.time ? h('span', { class: 'tm' }, D.fmtHM(it.time)) : h('span', { class: 'dt', style: `background:${it.color}` }), h('div', { class: 'nm' }, h('div', {}, it.label), it.sub ? h('div', { class: 'sub' }, it.sub) : null))));
+      bd.append(h('button', { class: 'btn btn-quiet btn-sm', style: 'margin-top:4px;align-self:flex-start', onclick: () => openEventEditor(null, { date: d }) }, '+'));
+      col.append(bd); wrap.append(col);
+    }
+    root.append(wrap);
+  } else {
+    title.textContent = 'Next 14 days';
+    const wrap = h('div', { class: 'cal-list scroll', style: 'flex:1' });
+    for (let i = 0; i < 14; i++) { const d = D.addDays(today, i); const items = dayItems(d, C, true); if (!items.length) continue; wrap.append(h('div', { class: 'dayhd' + (d === today ? ' today' : '') }, h('b', {}, Number(d.slice(8))), h('span', {}, `${D.dow(d)} · ${D.humanDate(d, today)}`))); const card = h('div', { class: 'card' }); const bd = h('div', { class: 'card-bd' }); items.forEach(it => bd.append(h('div', { class: 'cal-item', onclick: it.open }, it.time ? h('span', { class: 'tm' }, D.fmtHM(it.time)) : h('span', { class: 'dt', style: `background:${it.color}` }), h('div', { class: 'nm' }, h('div', {}, it.label), it.sub ? h('div', { class: 'sub' }, it.sub) : null)))); card.append(bd); wrap.append(card); }
+    root.append(wrap);
+  }
+};
+function calNav(dir) { if (CS.mode === 'month') { CS.m += dir; if (CS.m > 11) { CS.m = 0; CS.y++; } if (CS.m < 0) { CS.m = 11; CS.y--; } } else { CS.day = D.addDays(CS.day, 7 * dir); CS.y = Number(CS.day.slice(0, 4)); CS.m = Number(CS.day.slice(5, 7)) - 1; } renderers.calendar(); }
+// everything that belongs to a day: fixed events, work blocks, tasks due/scheduled, maintenance due, routines due (planner view)
+function dayItems(d, C, rich = false) {
+  const out = [];
+  eventsOn(d).forEach(e => out.push({ time: e.all_day ? null : D.timeOf(e.starts_at, S.tz), label: e.title, cls: e.kind === 'work_block' ? 'block' : '', color: e.kind === 'work_block' ? 'var(--violet)' : 'var(--sky)', sub: e.kind === 'work_block' ? 'Work block' : (e.ends_at && !e.all_day ? `until ${D.fmtHM(D.timeOf(e.ends_at, S.tz))}` : ''), open: () => openEventEditor(e), sort: e.all_day ? '00:00' : D.timeOf(e.starts_at, S.tz) }));
+  S.all('tasks').filter(t => t.status === 'open' && (t.due_date === d || D.dateOf(t.scheduled_start, S.tz) === d) && !(t.scheduled_start && D.dateOf(t.scheduled_start, S.tz) === d && S.all('events').some(e => e.task_id === t.id))).forEach(t => out.push({ time: D.dateOf(t.scheduled_start, S.tz) === d ? D.timeOf(t.scheduled_start, S.tz) : null, label: t.title, cls: t.importance === 'must' ? 'must' : 'task', color: t.importance === 'must' ? 'var(--coral)' : 'var(--accent)', sub: [t.importance === 'must' ? 'Must do' : 'Due', t.project_id ? projOf(t.project_id)?.name : areaOf(t.area_id)?.name].filter(Boolean).join(' · '), open: () => openTaskEditor(t), sort: D.dateOf(t.scheduled_start, S.tz) === d ? D.timeOf(t.scheduled_start, S.tz) : '99' }));
+  S.all('maintenance_rules').filter(m => m.active !== false && m.next_due === d).forEach(m => out.push({ time: null, label: m.name, cls: 'maint', color: 'var(--amber)', sub: 'Maintenance due', open: () => openMaintenanceSheet(m), sort: '98' }));
+  if (rich && d >= C.today) P.candidatesFor(d, C).filter(c => c.kind === 'routine' && c.due_date === d).forEach(c => out.push({ time: null, label: c.title, cls: 'task', color: 'var(--sage)', sub: 'Routine', open: () => openRoutineSheet(c.ref), sort: '97' }));
+  return out.sort((a, b) => a.sort.localeCompare(b.sort));
+}
+function openEventEditor(ev, defaults = {}) {
+  const isNew = !ev; const d0 = defaults.date || S.today();
+  const x = ev ? { ...ev } : { title: '', kind: 'fixed', date: d0, time: '18:00', end: '19:00', all_day: false, color: 'sky', notes: '', people_ids: [] };
+  if (ev) { x.date = D.dateOf(ev.starts_at, S.tz); x.time = D.timeOf(ev.starts_at, S.tz); x.end = ev.ends_at ? D.timeOf(ev.ends_at, S.tz) : ''; x.endDate = ev.ends_at ? D.dateOf(ev.ends_at, S.tz) : x.date; }
+  openSheet({ title: isNew ? 'New event' : (ev.kind === 'work_block' ? 'Work block' : 'Event'), saveLabel: isNew ? 'Add' : 'Save', build: b => {
+    b.append(h('input', { class: 'big-input', placeholder: 'Title', value: x.title, autofocus: true, oninput: e => x.title = e.target.value }));
+    const rows = h('div', { class: 'rows' });
+    rows.append(srow('📅', 'Date', h('input', { type: 'date', value: x.date, onchange: e => x.date = e.target.value })));
+    rows.append(srow('🌞', 'All day', h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: x.all_day, onchange: e => { x.all_day = e.target.checked; tRow.style.display = eRow.style.display = x.all_day ? 'none' : ''; } }), h('i'))));
+    const tRow = srow('🕐', 'Start', h('input', { type: 'time', value: x.time, onchange: e => x.time = e.target.value })); const eRow = srow('🕓', 'End', h('input', { type: 'time', value: x.end, onchange: e => x.end = e.target.value }));
+    if (x.all_day) tRow.style.display = eRow.style.display = 'none';
+    rows.append(tRow, eRow);
+    rows.append(srow('🏷️', 'Type', h('select', { onchange: e => x.kind = e.target.value }, ...[['fixed','Fixed event'],['travel','Travel'],['deadline','Deadline'],['work_block','Work block']].map(([v, l]) => h('option', { value: v, selected: x.kind === v }, l)))));
+    rows.append(srow('🎨', 'Color', h('select', { onchange: e => x.color = e.target.value }, ...['sky','violet','coral','sage','amber'].map(v => h('option', { value: v, selected: x.color === v }, v)))));
+    const who = h('div', { class: 'chips', style: 'padding:0' }); S.people.forEach(p => { const on = (x.people_ids || []).includes(p.id); const c = h('button', { class: on ? 'active' : '', type: 'button' }, p.name); c.onclick = () => { const i = x.people_ids.indexOf(p.id); if (i >= 0) x.people_ids.splice(i, 1); else x.people_ids.push(p.id); c.classList.toggle('active'); }; who.append(c); }); rows.append(srow('👥', 'Who', who));
+    b.append(rows, h('textarea', { class: 'big-input', style: 'margin-top:10px', placeholder: 'Notes / location', oninput: e => x.notes = e.target.value }, x.notes || ''));
+    if (!isNew) b.append(h('button', { class: 'btn btn-danger', style: 'margin-top:16px', onclick: async () => { closeSheet(); await dbRemove('events', ev.id); if (ev.task_id) { const t = S.get('tasks', ev.task_id); if (t) dbUpdate('tasks', t.id, { scheduled_start: null, scheduled_end: null }, { silent: true }); } toast('Removed'); } }, 'Delete'));
+  }, onSave: async () => {
+    if (!x.title.trim()) return false;
+    const starts_at = x.all_day ? D.toISO(x.date, '00:00', S.tz) : D.toISO(x.date, x.time || '09:00', S.tz);
+    const ends_at = x.all_day ? D.toISO(x.date, '23:59', S.tz) : (x.end ? D.toISO(x.date, x.end, S.tz) : null);
+    const patch = { title: x.title.trim(), kind: x.kind, starts_at, ends_at, all_day: !!x.all_day, color: x.color, notes: x.notes || null, people_ids: x.people_ids || [] };
+    if (isNew) { await dbInsert('events', patch); toast('Added'); } else { await dbUpdate('events', ev.id, patch); if (ev.task_id) dbUpdate('tasks', ev.task_id, { scheduled_start: starts_at, scheduled_end: ends_at }, { silent: true }); }
+  } });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SETTINGS + WHAT HOMEBASE KNOWS
+// ═══════════════════════════════════════════════════════════════════════════
+const SS = { tab: 'knows' };
+renderers.settings = function renderSettings(params) {
+  if (params?.tab) SS.tab = params.tab;
+  const body = $('#settings-body'); body.innerHTML = '';
+  const wrap = h('div', { class: 'container' });
+  const seg = h('div', { class: 'seg', style: 'margin-bottom:18px;flex-wrap:wrap' });
+  [['knows','What HomeBase knows'],['household','Household'],['planning','Planning'],['app','App & connections']].forEach(([k, l]) => seg.append(h('button', { class: SS.tab === k ? 'active' : '', onclick: () => { SS.tab = k; renderers.settings(); } }, l)));
+  wrap.append(seg);
+  if (SS.tab === 'knows') wrap.append(renderKnows());
+  else if (SS.tab === 'household') wrap.append(renderHousehold());
+  else if (SS.tab === 'planning') wrap.append(renderPlanning());
+  else wrap.append(renderAppSettings());
+  body.append(wrap);
+};
+function renderKnows() {
+  const grid = h('div', { class: 'settings-grid' });
+  const mems = S.all('memories').filter(m => m.status !== 'rejected').sort((a, b) => (a.status === 'ignored') - (b.status === 'ignored') || b.confidence - a.confidence);
+  const subjects = ['preferences','scheduling','family','home','projects','plants','pets','people'];
+  const intro = h('div', { class: 'note', style: 'grid-column:1/-1' }, 'Everything HomeBase has learned or been told, by subject. Confirm what is right, fix what is off, ignore what should not influence planning. Observed patterns come from your real history and update nightly.');
+  grid.append(intro);
+  const add = h('div', { style: 'grid-column:1/-1;display:flex;gap:8px' }, h('input', { class: 'chip', style: 'flex:1;font-weight:500', placeholder: 'Tell HomeBase something to remember…', onkeydown: async e => { if (e.key === 'Enter' && e.target.value.trim()) { await dbInsert('memories', { subject: 'preferences', kind: 'preference', content: e.target.value.trim(), source: 'stated', confidence: 0.95, evidence_count: 1, status: 'active', last_confirmed_at: new Date().toISOString() }, { silent: true }); e.target.value = ''; toast('Remembered'); } } }));
+  grid.append(add);
+  for (const s of subjects) {
+    const list = mems.filter(m => m.subject === s); if (!list.length) continue;
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, s[0].toUpperCase() + s.slice(1)), h('span', { class: 'cnt' }, list.length)));
+    const bd = h('div', { class: 'card-bd' });
+    list.forEach(m => {
+      const row = h('div', { class: 'mem' + (m.status === 'ignored' ? ' ignored' : '') });
+      const content = h('div', { class: 'content', contenteditable: 'true', spellcheck: 'false', onblur: async e => { const v = e.target.textContent.trim(); if (v && v !== m.content) { await dbUpdate('memories', m.id, { content: v, source: 'stated', confidence: Math.max(m.confidence, 0.9), last_confirmed_at: new Date().toISOString() }, { silent: true }); toast('Updated'); } }, onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } } }, m.content);
+      const meta = h('div', { class: 'meta' }, h('span', { class: 'conf ' + confKey(m.confidence) }, confLabel(m.confidence)), h('span', {}, m.source === 'observed' ? `observed · ${m.evidence_count}× ` : m.source === 'inferred' ? 'inferred' : 'you told me'), m.kind === 'pattern' || m.kind === 'stat' ? h('span', { class: 'tag' }, m.kind) : null, m.last_confirmed_at ? h('span', {}, `confirmed ${D.humanDate(D.dateOf(m.last_confirmed_at, S.tz), S.today())}`) : null);
+      const acts = h('div', { class: 'acts' });
+      if (m.status === 'ignored') acts.append(h('button', { class: 'btn btn-ghost btn-sm', onclick: () => dbUpdate('memories', m.id, { status: 'active' }, { silent: true }) }, 'Use'));
+      else { if (m.confidence < 0.95 || !m.last_confirmed_at) acts.append(h('button', { class: 'icon-btn', title: 'Confirm', onclick: () => dbUpdate('memories', m.id, { confidence: 1, last_confirmed_at: new Date().toISOString() }, { silent: true }) }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>' }))); acts.append(h('button', { class: 'icon-btn', title: 'Ignore', onclick: () => dbUpdate('memories', m.id, { status: 'ignored' }, { silent: true }) }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M17.9 17.9A10 10 0 0 1 3.5 8.3M9.9 4.2A10 10 0 0 1 21.7 12M1 1l22 22"/></svg>' }))); }
+      acts.append(h('button', { class: 'icon-btn', title: 'Forget', onclick: async () => { await dbUpdate('memories', m.id, { status: 'rejected' }, { silent: true }); toast('Forgotten', () => dbUpdate('memories', m.id, { status: 'active' }, { silent: true })); } }, h('span', { html: '<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>' })));
+      row.append(h('div', { class: 'body' }, content, meta), acts); bd.append(row);
+    });
+    card.append(bd); grid.append(card);
+  }
+  if (!mems.length) grid.append(h('div', { class: 'empty', style: 'grid-column:1/-1' }, 'Nothing learned yet. Chat with HomeBase or complete a few tasks.'));
+  return grid;
+}
+function renderHousehold() {
+  const grid = h('div', { class: 'settings-grid' });
+  const hc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Household')));
+  const hb = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  hb.append(h('div', { class: 'field' }, h('label', {}, 'Name'), h('input', { value: S.household?.name || '', onchange: async e => { await api.updateHousehold({ name: e.target.value }); S.household.name = e.target.value; toast('Saved'); } })));
+  hb.append(h('div', { class: 'field' }, h('label', {}, 'Timezone'), h('input', { value: S.tz, onchange: async e => { try { new Intl.DateTimeFormat('en-US', { timeZone: e.target.value }); await api.updateHousehold({ tz: e.target.value }); S.tz = e.target.value; toast('Saved'); } catch { toast('Unknown timezone'); } } })));
+  hb.append(h('div', { class: 'sec-title' }, 'People'));
+  const pp = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' }); S.people.forEach(p => pp.append(h('span', { class: 'person-chip' }, h('span', { class: 'avatar ' + (p.color || '') }, p.name[0]), p.name, p.is_user ? h('span', { class: 'faint', style: 'font-size:11px' }, 'user') : null))); hb.append(pp);
+  const addP = h('div', { style: 'display:flex;gap:8px;margin-top:10px' }, h('input', { class: 'chip', style: 'flex:1;font-weight:500', placeholder: 'Add a person (family member, kid)…', id: 'new-person' }), h('button', { class: 'btn btn-ghost btn-sm', onclick: async () => { const i = $('#new-person'); if (!i.value.trim()) return; await dbInsert('people', { name: i.value.trim(), is_user: false, sort: S.people.length }, { silent: true }); S.people = S.all('people').sort((a, b) => a.sort - b.sort); i.value = ''; renderers.settings(); } }, 'Add')); hb.append(addP);
+  hb.append(h('div', { class: 'sec-title' }, 'Invite'), h('p', { class: 'muted', style: 'font-size:14px' }, 'Hayley (or anyone in the house) signs in with their own email, chooses “Join a household” and enters this code:'), h('div', { style: 'display:flex;align-items:center;gap:10px;margin-top:8px' }, h('code', { class: 'kbd', style: 'font-size:20px;padding:6px 12px;letter-spacing:.1em' }, S.household?.invite_code || '—'), h('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigator.clipboard?.writeText(S.household?.invite_code || '').then(() => toast('Copied')) }, 'Copy')));
+  hc.append(hb); grid.append(hc);
+  const ac = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Areas'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openAreaEditor() }, '+ Add')));
+  const ab = h('div', { class: 'card-bd' }); S.all('areas').filter(a => !a.archived).sort((a, b) => a.kind.localeCompare(b.kind) || a.sort - b.sort).forEach(a => ab.append(h('div', { class: 'row', onclick: () => openAreaEditor(a) }, h('div', { class: 'ico' }, a.emoji || '📁'), h('div', { class: 'body' }, h('div', { class: 'title' }, a.name), h('div', { class: 'ctx' }, a.kind)), h('button', { class: 'icon-btn', title: 'Archive', onclick: e => { e.stopPropagation(); dbUpdate('areas', a.id, { archived: true }, { silent: true }); } }, '×')))); ac.append(ab); grid.append(ac);
+  const rc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Routines'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openRoutineEditor() }, '+ Add')));
+  rc.append(routinesList().firstChild); grid.append(rc);
+  const pc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Pets')));
+  const pb = h('div', { class: 'card-bd' }); S.all('pets').forEach(p => pb.append(h('div', { class: 'row' }, h('div', { class: 'ico' }, '🐾'), h('div', { class: 'body' }, h('div', { class: 'title' }, p.name), h('div', { class: 'ctx' }, p.species || ''))))); pb.append(h('div', { style: 'display:flex;gap:8px;padding:6px' }, h('input', { class: 'chip', style: 'flex:1;font-weight:500', placeholder: 'Add a pet…', id: 'new-pet' }), h('button', { class: 'btn btn-ghost btn-sm', onclick: async () => { const i = $('#new-pet'); if (!i.value.trim()) return; await dbInsert('pets', { name: i.value.trim() }, { silent: true }); i.value = ''; renderers.settings(); } }, 'Add'))); pc.append(pb); grid.append(pc);
+  return grid;
+}
+function renderPlanning() {
+  const grid = h('div', { class: 'settings-grid' });
+  const st = P.settingsOf(ctx());
+  const cc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Capacity (minutes of discretionary time)')));
+  const cb = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  cb.append(h('p', { class: 'faint', style: 'font-size:13px;margin-bottom:10px' }, 'How much flexible time HomeBase plans per day for each kind of day. Fixed calendar events are subtracted automatically. Weekend capacity is replaced by what you actually complete once there is enough history.'));
+  const tbl = h('table', { class: 'costs' }, h('thead', {}, h('tr', {}, h('th', {}, 'Day type'), h('th', { class: 'num' }, 'Weekday'), h('th', { class: 'num' }, 'Weekend'))));
+  const tb = h('tbody'); const cap = JSON.parse(JSON.stringify(st.capacity));
+  for (const k of ['normal','busy','travel','sick','vacation','project']) tb.append(h('tr', {}, h('td', {}, k), h('td', { class: 'num' }, h('input', { type: 'number', value: cap[k].weekday, style: 'width:70px;text-align:right', class: 'chip', onchange: e => cap[k].weekday = Number(e.target.value) || 0 })), h('td', { class: 'num' }, h('input', { type: 'number', value: cap[k].weekend, style: 'width:70px;text-align:right', class: 'chip', onchange: e => cap[k].weekend = Number(e.target.value) || 0 }))));
+  tbl.append(tb); cb.append(tbl);
+  const wins = JSON.parse(JSON.stringify(st.windows));
+  cb.append(h('div', { class: 'sec-title' }, 'Discretionary windows'));
+  cb.append(h('div', { class: 'frow' }, h('div', { class: 'field' }, h('label', {}, 'Weekday'), h('div', { style: 'display:flex;gap:6px;align-items:center' }, h('input', { type: 'time', value: wins.weekday[0].start, onchange: e => wins.weekday[0].start = e.target.value }), '–', h('input', { type: 'time', value: wins.weekday[0].end, onchange: e => wins.weekday[0].end = e.target.value }))), h('div', { class: 'field' }, h('label', {}, 'Weekend'), h('div', { style: 'display:flex;gap:6px;align-items:center' }, h('input', { type: 'time', value: wins.weekend[0].start, onchange: e => wins.weekend[0].start = e.target.value }), '–', h('input', { type: 'time', value: wins.weekend[0].end, onchange: e => wins.weekend[0].end = e.target.value })))));
+  const wx = { ...(S.settings.weather || { lat: 29.703, lon: -98.124, label: 'New Braunfels, TX' }) };
+  cb.append(h('div', { class: 'sec-title' }, 'Weather location'), h('div', { class: 'frow' }, h('div', { class: 'field' }, h('label', {}, 'Latitude'), h('input', { type: 'number', step: '0.001', value: wx.lat, onchange: e => wx.lat = Number(e.target.value) })), h('div', { class: 'field' }, h('label', {}, 'Longitude'), h('input', { type: 'number', step: '0.001', value: wx.lon, onchange: e => wx.lon = Number(e.target.value) }))));
+  cb.append(h('button', { class: 'btn btn-primary', onclick: async () => { const settings = { ...S.settings, capacity: cap, windows: wins, weather: wx }; await api.updateHousehold({ settings }); S.settings = settings; localStorage.removeItem('hb_wx'); loadWeather(); toast('Planning settings saved'); } }, 'Save'));
+  cc.append(cb); grid.append(cc);
+  // day modes list
+  const dm = S.all('day_modes').filter(m => m.date >= S.today()).sort((a, b) => a.date.localeCompare(b.date));
+  const mc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Upcoming day modes'), h('button', { class: 'btn btn-quiet btn-sm', onclick: () => openDayModeSheet(S.today()) }, '+ Set')));
+  const mb = h('div', { class: 'card-bd' }); if (!dm.length) mb.append(h('div', { class: 'empty' }, 'No special days ahead. Tell HomeBase “I’m traveling Tue–Thu” and it will replan.')); dm.forEach(m => mb.append(h('div', { class: 'row', onclick: () => openDayModeSheet(m.date) }, h('div', { class: 'ico' }, { sick: '🤒', travel: '✈️', busy: '💼', vacation: '🌴', project: '🔨' }[m.mode] || '☀️'), h('div', { class: 'body' }, h('div', { class: 'title' }, `${D.humanDate(m.date, S.today())} · ${m.mode}`), h('div', { class: 'ctx' }, m.note || '')), svgChev())));
+  mc.append(mb); grid.append(mc);
+  // recent activity
+  const lc = h('div', { class: 'card', style: 'grid-column:1/-1' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Recent activity')));
+  const lb = h('div', { class: 'card-bd' }); S.all('activity_log').sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30).forEach(a => lb.append(h('div', { class: 'faint', style: 'font-size:13px;padding:4px 10px;display:flex;gap:8px' }, h('span', { style: 'min-width:90px' }, `${D.humanDate(D.dateOf(a.at, S.tz), S.today())} ${D.fmtHM(D.timeOf(a.at, S.tz))}`), h('span', { style: 'min-width:60px' }, a.actor === 'ai' ? '✨ HomeBase' : a.actor === 'system' ? '⚙️ planner' : (personOf(a.actor)?.name || 'you')), h('span', {}, `${a.action} ${a.entity_type}${a.after?.title || a.after?.name ? ' · ' + (a.after.title || a.after.name) : ''}${a.reason ? ' · ' + a.reason : ''}`)))); lc.append(lb); grid.append(lc);
+  return grid;
+}
+function renderAppSettings() {
+  const grid = h('div', { class: 'settings-grid' });
+  const cc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Connections')));
+  const cb = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  cb.append(h('div', { class: 'field' }, h('label', {}, 'AI Worker URL'), h('input', { value: CFG.workerUrl, placeholder: 'https://homebase-ai.<you>.workers.dev', onchange: e => { CFG.workerUrl = e.target.value.trim().replace(/\/$/, ''); localStorage.setItem('hb_worker_url', CFG.workerUrl); toast('Saved'); } }), h('div', { class: 'help' }, 'The Cloudflare Worker that runs HomeBase’s brain. Keys stay there, never in this page.')));
+  cb.append(h('div', { style: 'display:flex;gap:8px' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: testWorker }, 'Test connection')));
+  if (!DEMO) { cb.append(h('div', { class: 'sec-title' }, 'Supabase'), h('div', { class: 'field' }, h('label', {}, 'Project URL'), h('input', { value: CFG.supabaseUrl, onchange: e => { localStorage.setItem('hb_sb_url', e.target.value.trim()); toast('Saved — reload to apply'); } })), h('div', { class: 'field' }, h('label', {}, 'Anon key'), h('input', { value: CFG.supabaseAnonKey, onchange: e => { localStorage.setItem('hb_sb_key', e.target.value.trim()); toast('Saved — reload to apply'); } }))); }
+  cc.append(cb); grid.append(cc);
+  const ac = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Appearance & wall')));
+  const ab = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  const theme = localStorage.getItem('hb_theme') || 'auto';
+  const tseg = h('div', { class: 'seg' }); [['auto','Auto'],['light','Light'],['dark','Dark']].forEach(([v, l]) => tseg.append(h('button', { class: theme === v ? 'active' : '', onclick: () => { localStorage.setItem('hb_theme', v); applyTheme(); renderers.settings(); } }, l)));
+  ab.append(h('div', { class: 'field' }, h('label', {}, 'Theme'), tseg));
+  ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall display PIN'), h('div', { style: 'display:flex;gap:8px' }, h('input', { type: 'password', inputmode: 'numeric', maxlength: 4, placeholder: '4 digits', id: 'pin-new', style: 'width:130px' }), h('button', { class: 'btn btn-ghost', onclick: async () => { const v = $('#pin-new').value; if (!/^\d{4}$/.test(v)) return toast('4 digits'); localStorage.setItem('hb_wall_pin', await sha(v)); $('#pin-new').value = ''; toast('PIN set'); } }, 'Set')), h('div', { class: 'help' }, 'A display lock for the mounted iPad. It is not a security boundary — the real login is your account.')));
+  ab.append(h('div', { class: 'field' }, h('label', {}, 'Wall auto-dim'), h('div', { class: 'muted', style: 'font-size:14px' }, 'Dims 11 pm – 6 am. Open the wall view with the screen icon or add ', h('code', { class: 'kbd' }, '?wall=1'), ' to the URL on the mounted iPad.')));
+  ac.append(ab); grid.append(ac);
+  const dc = h('div', { class: 'card' }, h('div', { class: 'card-hd' }, h('h3', {}, 'Account')));
+  const db = h('div', { class: 'card-bd', style: 'padding:6px 16px 16px' });
+  db.append(h('p', { class: 'muted', style: 'font-size:14px' }, DEMO ? 'Demo mode — nothing is saved.' : `Signed in as ${S.user?.email || ''}`));
+  db.append(h('div', { style: 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap' }, DEMO ? h('button', { class: 'btn btn-ghost', onclick: () => { localStorage.removeItem('hb_demo'); location.href = location.pathname; } }, 'Leave demo') : h('button', { class: 'btn btn-ghost', onclick: async () => { await sb.auth.signOut(); location.reload(); } }, 'Sign out'), h('button', { class: 'btn btn-quiet', onclick: () => { if (confirm('Clear cached settings on this device?')) { ['hb_wx','hb_snooze','hb_theme'].forEach(k => localStorage.removeItem(k)); location.reload(); } } }, 'Reset device cache')));
+  db.append(h('p', { class: 'faint', style: 'font-size:12px;margin-top:14px' }, `HomeBase v2 · build ${BUILD}`));
+  dc.append(db); grid.append(dc);
+  return grid;
+}
+async function sha(s) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+function applyTheme() { const t = localStorage.getItem('hb_theme') || 'auto'; if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
+async function testWorker() {
+  if (!CFG.workerUrl) return toast('Set the Worker URL first');
+  try { const r = await fetch(CFG.workerUrl + '/health'); const j = await r.json(); toast(j.ok ? `Worker OK · ${j.model}` : 'Worker responded oddly'); } catch (e) { toast('Cannot reach Worker: ' + e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI — Ask bar + panel, SSE client to the Worker
+// ═══════════════════════════════════════════════════════════════════════════
+const AI = { thread: null, busy: false, msgs: [] };
+function openAI() { const p = $('#ai'); p.classList.add('open'); p.setAttribute('aria-hidden', 'false'); if (!AI.msgs.length) aiWelcome(); setTimeout(() => { if (!isPhone()) $('#ai-input').focus(); }, 300); }
+function closeAI() { const p = $('#ai'); p.classList.remove('open'); p.setAttribute('aria-hidden', 'true'); }
+$('#ai-btn').onclick = openAI; $('#ai-close').onclick = closeAI; $('#ai-scrim').onclick = closeAI;
+$('#ai-new').onclick = () => { AI.thread = null; AI.msgs = []; $('#ai-msgs').innerHTML = ''; aiWelcome(); };
+function aiWelcome() {
+  const C = ctx(); const attn = attention(C);
+  const box = $('#ai-msgs');
+  box.append(aiBubble(`Hi${S.person ? ' ' + S.person.name.split(' ')[0] : ''}. Tell me what happened or what changed, and I’ll update HomeBase. Try:`));
+  const chips = h('div', { class: 'chips' });
+  const sug = [...attn.slice(0, 2).map(a => a.action?.type === 'log_routine' ? `Log ${S.get('routines', a.action.id)?.name.toLowerCase()}` : a.action?.type === 'record_maintenance' ? `I did the ${S.get('maintenance_rules', a.action.id)?.name.toLowerCase().replace(/^replace |^flush /, '')}` : a.title), 'What should I focus on today?', 'I’m traveling Tuesday through Thursday', 'What’s the next nursery step?'];
+  [...new Set(sug)].slice(0, 5).forEach(s => chips.append(h('button', { onclick: () => sendAI(s) }, s)));
+  box.append(chips);
+}
+function aiBubble(text, cls = 'ai') { const m = h('div', { class: 'msg ' + cls }); m.append(h('div', { class: 'bub', html: cls === 'ai' ? md(text) : esc(text) })); return m; }
+function md(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^(?:- |• )(.*)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m.replace(/\n/g, '') + '</ul>').replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>').replace(/^/, '<p>').replace(/$/, '</p>'); }
+async function sendAI(text, { fromWall } = {}) {
+  text = (text || '').trim(); if (!text || AI.busy) return;
+  if (!fromWall) openAI();
+  const box = $('#ai-msgs'); box.append(aiBubble(text, 'user')); AI.msgs.push({ role: 'user', text });
+  const reply = h('div', { class: 'msg ai' }); const bub = h('div', { class: 'bub cursor', html: '' }); reply.append(bub); box.append(reply); box.scrollTop = box.scrollHeight;
+  const wallReply = fromWall ? $('#wall-reply') : null; if (wallReply) { wallReply.textContent = '…'; wallReply.classList.add('show'); }
+  AI.busy = true; $('#ai-send').disabled = true; $('#ask-send').disabled = true;
+  let full = '';
+  const finish = () => { AI.busy = false; $('#ai-send').disabled = false; $('#ask-send').disabled = false; bub.classList.remove('cursor'); box.scrollTop = box.scrollHeight; };
+  if (!CFG.workerUrl) { bub.innerHTML = md(DEMO ? demoReply(text) : 'Set the **AI Worker URL** in Settings → App & connections to turn me on.'); if (wallReply) wallReply.textContent = bub.textContent; finish(); return; }
+  try {
+    const res = await fetch(CFG.workerUrl + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ thread_id: AI.thread, message: text, context: { view, date: S.today(), now: S.now(), device: fromWall ? 'wall' : isPhone() ? 'phone' : 'desktop' } }) });
+    if (!res.ok || !res.body) throw new Error(`Worker ${res.status}`);
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    const toolLines = new Map();
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx; while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        let ev = 'message', data = '';
+        for (const line of frame.split('\n')) { if (line.startsWith('event:')) ev = line.slice(6).trim(); else if (line.startsWith('data:')) data += line.slice(5).trim(); }
+        if (!data) continue; let j; try { j = JSON.parse(data); } catch { continue; }
+        if (ev === 'thread') AI.thread = j.thread_id;
+        else if (ev === 'text') { full += j.delta || ''; bub.innerHTML = md(full); if (wallReply) wallReply.textContent = full; }
+        else if (ev === 'tool') { if (j.status === 'start') { const l = h('div', { class: 'tool-line' }, h('span', { class: 'sp' }), j.summary || j.name); toolLines.set(j.name + (j.id || ''), l); reply.before(l); } else { const l = toolLines.get(j.name + (j.id || '')); if (l) { l.innerHTML = `<span style="color:var(--sage)">✓</span> ${esc(j.summary || j.name)}`; } } }
+        else if (ev === 'action') { reply.before(actionCard(j)); }
+        else if (ev === 'proposal') { reply.before(proposalCard(j)); }
+        else if (ev === 'error') { full += `\n\n⚠️ ${j.message}`; bub.innerHTML = md(full); }
+        else if (ev === 'done') { /* usage */ }
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+    if (!full.trim()) bub.innerHTML = md('Done.');
+  } catch (e) { bub.innerHTML = md(`⚠️ Couldn’t reach HomeBase’s brain (${e.message}).`); }
+  AI.msgs.push({ role: 'assistant', text: full }); finish();
+  if (!DEMO && !realtime) api.load().then(() => emit('tasks'));
+}
+function actionCard(a) {
+  const c = h('div', { class: 'action-card' }, h('span', { class: 'ok' }, '✓'), h('span', {}, a.summary || `${a.action} ${a.entity_type}`));
+  if (a.undo) c.append(h('button', { onclick: async () => { try { await fetch(CFG.workerUrl + '/undo', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify(a.undo) }); c.innerHTML = '<span class="faint">Undone</span>'; } catch { toast('Undo failed'); } } }, 'Undo'));
+  return c;
+}
+function proposalCard(p) {
+  const c = h('div', { class: 'proposal' }, h('div', {}, p.summary || 'Confirm this change?'));
+  const acts = h('div', { class: 'acts' });
+  acts.append(h('button', { class: 'btn btn-primary btn-sm', onclick: async () => { try { const r = await fetch(CFG.workerUrl + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token() }, body: JSON.stringify({ proposal_id: p.id }) }); const j = await r.json(); c.innerHTML = j.ok ? `<span style="color:var(--sage)">✓</span> ${esc(j.action?.summary || 'Done')}` : `⚠️ ${esc(j.error || 'Failed')}`; } catch (e) { toast('Failed: ' + e.message); } } }, 'Confirm'), h('button', { class: 'btn btn-ghost btn-sm', onclick: () => { c.innerHTML = '<span class="faint">Skipped</span>'; } }, 'Skip'));
+  c.append(acts); return c;
+}
+// demo-mode canned brain so the UI can be previewed without a Worker
+function demoReply(t) {
+  const C = ctx(); const plan = P.planDay(C.today, C); const attn = attention(C);
+  const l = t.toLowerCase();
+  if (l.includes('today') || l.includes('focus')) return `**Must do:** ${plan.must.map(c => c.title).join(', ') || 'nothing'}.\n\n**Planned:** ${plan.planned.map(c => c.title).join(', ') || 'nothing'} (${mins(plan.used)} of ${mins(plan.capacity.minutes)}).\n\n**Watch:** ${attn.slice(0, 3).map(a => a.title).join(' · ')}`;
+  if (l.includes('travel')) return 'In demo mode I can’t write changes, but with the Worker connected I’d set Tue–Thu to travel mode, keep must-dos, move home-only work to the weekend without piling it on Friday, and tell you what moved.';
+  if (l.includes('nursery')) { const n = P.nextStepOf(S.all('projects').find(p => p.name === 'Nursery')?.id, C); return n ? `Next nursery step: **${n.title}** (${mins(n.est_min)}). Saturday morning has room — want me to block it?` : 'Nursery is done!'; }
+  return 'Demo mode: this is a canned reply. Connect the Worker in Settings to get the real assistant with full read/write access and memory.';
+}
+$('#ai-send').onclick = () => { const i = $('#ai-input'); sendAI(i.value); i.value = ''; i.style.height = 'auto'; };
+$('#ai-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#ai-send').click(); } });
+$('#ai-input').addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 130) + 'px'; });
+$('#ask-form').onsubmit = e => { e.preventDefault(); const i = $('#ask-input'); const v = i.value; i.value = ''; i.blur(); sendAI(v); };
+// voice
+function wireMic(btn, input) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) { btn.style.display = 'none'; return; }
+  let rec = null;
+  btn.onclick = () => { if (rec) { rec.stop(); return; } rec = new SR(); rec.lang = 'en-US'; rec.interimResults = true; btn.classList.add('listening'); rec.onresult = e => { input.value = [...e.results].map(r => r[0].transcript).join(''); }; rec.onend = () => { btn.classList.remove('listening'); rec = null; if (input.value.trim()) input.form?.requestSubmit ? input.form.requestSubmit() : sendAI(input.value); }; rec.onerror = () => { btn.classList.remove('listening'); rec = null; }; rec.start(); };
+}
+wireMic($('#mic-btn'), $('#ask-input')); wireMic($('#wall-mic'), $('#wall-input'));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WALL DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════
+const W = { open: false, mode: 'day', timer: null };
+function openWall() { W.open = true; $('#wall').classList.add('open'); renderWall(); clearInterval(W.timer); W.timer = setInterval(renderWall, 30000); if (localStorage.getItem('hb_wall_pin')) armWallLock(); }
+function closeWall() { W.open = false; $('#wall').classList.remove('open'); clearInterval(W.timer); }
+$('#wall-btn').onclick = openWall; $('#wall-exit').onclick = () => { if (localStorage.getItem('hb_wall_pin')) askPin(closeWall); else closeWall(); };
+$$('[data-wall]').forEach(b => b.onclick = () => { W.mode = b.dataset.wall; $$('[data-wall]').forEach(x => x.classList.toggle('active', x === b)); renderWall(); });
+$('#wall-ask').onsubmit = e => { e.preventDefault(); const i = $('#wall-input'); const v = i.value; i.value = ''; sendAI(v, { fromWall: true }); setTimeout(() => $('#wall-reply').classList.remove('show'), 45000); };
+let wallSwipeX = 0; $('#wall').addEventListener('touchstart', e => wallSwipeX = e.touches[0].clientX, { passive: true }); $('#wall').addEventListener('touchend', e => { const dx = e.changedTouches[0].clientX - wallSwipeX; if (Math.abs(dx) > 80) { W.mode = dx < 0 ? 'week' : 'day'; $$('[data-wall]').forEach(x => x.classList.toggle('active', x.dataset.wall === W.mode)); renderWall(); } }, { passive: true });
+function renderWall() {
+  if (!W.open) return;
+  const C = ctx(); const today = C.today; const now = new Date();
+  $('#wall-time').textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: S.tz });
+  $('#wall-date').textContent = D.longDate(today);
+  const wx = S.weather[today]; $('#wall-wx').innerHTML = wx ? `<b>${wx.tmax_f}°</b>${wx.rain_prob}% rain` : '';
+  const hr = Number(C.now.slice(0, 2)); $('#wall').classList.toggle('dim', hr >= 23 || hr < 6);
+  const day = $('#wall-day'), week = $('#wall-week'); day.classList.toggle('hidden', W.mode !== 'day'); week.classList.toggle('hidden', W.mode !== 'week');
+  if (W.mode === 'day') {
+    day.innerHTML = '';
+    const plan = P.planDay(today, C); const attn = attention(C);
+    const card = (title, sub, cls = '') => { const c = h('div', { class: 'wall-card ' + cls }); c.append(h('div', { class: 'hd' }, h('span', {}, title), sub ? h('span', {}, sub) : null)); const bd = h('div', { class: 'bd' }); c.append(bd); return [c, bd]; };
+    const [c1, b1] = card('Today', `${plan.must.length + plan.planned.length} items`, 'tall');
+    eventsOn(today).filter(e => e.kind !== 'work_block').forEach(e => b1.append(h('div', { class: 'wall-item' }, h('span', { class: 'dot fixed' }), h('div', {}, e.title, h('span', { class: 'sub' }, e.all_day ? 'All day' : D.fmtHM(D.timeOf(e.starts_at, S.tz)))))));
+    [...plan.must, ...plan.planned].forEach(c => b1.append(h('div', { class: 'wall-item' }, h('span', { class: 'dot ' + (c.importance === 'must' ? 'must' : '') }), h('div', {}, c.title, h('span', { class: 'sub' }, c.kind === 'task' && c.ref.assignee_id ? personOf(c.ref.assignee_id)?.name : c.kind === 'step' ? 'Project' : c.kind === 'routine' ? 'Routine' : c.kind === 'maintenance' ? 'Maintenance' : '')))));
+    S.all('tasks').filter(t => t.status === 'done' && D.dateOf(t.completed_at, S.tz) === today).slice(0, 4).forEach(t => b1.append(h('div', { class: 'wall-item done' }, h('span', { class: 'dot' }), h('div', {}, t.title))));
+    if (!b1.children.length) b1.append(h('div', { class: 'wall-item' }, h('div', { class: 'faint' }, 'Clear day')));
+    const [c2, b2] = card('Needs attention', attn.length ? `${attn.length}` : '');
+    attn.slice(0, 5).forEach(a => b2.append(h('div', { class: 'wall-item', style: 'font-size:17px' }, h('span', { class: `rank r${a.rank}`, style: 'width:10px;height:10px;border-radius:50%;flex-shrink:0' }), h('div', {}, a.title, a.detail ? h('span', { class: 'sub' }, a.detail) : null))));
+    if (!attn.length) b2.append(h('div', { class: 'wall-item' }, h('div', { class: 'faint' }, 'Nothing slipping')));
+    const [c3, b3] = card('Projects', '');
+    S.all('projects').filter(p => p.status === 'active').sort((a, b) => a.priority - b.priority).slice(0, 2).forEach(p => { const n = P.nextStepOf(p.id, C); const pct = projectProgress(p.id); b3.append(h('div', { class: 'wall-item', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('div', { style: 'display:flex;justify-content:space-between' }, h('span', {}, p.name), h('span', { class: 'faint' }, `${pct}%`)), h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` })), h('span', { class: 'sub' }, n ? `Next: ${n.title}` : 'Done'))); });
+    const [c4, b4] = card('Tomorrow', D.dayName(D.addDays(today, 1)));
+    const tm = D.addDays(today, 1); const tp = P.planDay(tm, C);
+    eventsOn(tm).filter(e => e.kind !== 'work_block').forEach(e => b4.append(h('div', { class: 'wall-item', style: 'font-size:17px' }, h('span', { class: 'dot fixed' }), h('div', {}, e.title, h('span', { class: 'sub' }, e.all_day ? 'All day' : D.fmtHM(D.timeOf(e.starts_at, S.tz)))))));
+    [...tp.must, ...tp.planned.slice(0, 4)].forEach(c => b4.append(h('div', { class: 'wall-item', style: 'font-size:17px' }, h('span', { class: 'dot ' + (c.importance === 'must' ? 'must' : '') }), h('div', {}, c.title))));
+    if (!b4.children.length) b4.append(h('div', { class: 'wall-item' }, h('div', { class: 'faint' }, 'Open')));
+    const [c5, b5] = card('Ruby & routines', '');
+    S.all('routines').filter(r => r.active !== false && ['daily'].includes(R.normalizeRule(r.cadence)?.freq)).forEach(r => { const done = D.dateOf(r.last_done_at, S.tz) === today; b5.append(h('div', { class: 'wall-item' + (done ? ' done' : ''), style: 'font-size:17px' }, h('span', { class: 'dot', style: done ? 'background:var(--sage)' : 'background:var(--border2)' }), h('div', {}, `${r.emoji || ''} ${r.name}`, r.streak ? h('span', { class: 'sub' }, `streak ${r.streak}`) : null))); });
+    day.append(c1, c2, c3, c4, c5);
+  } else {
+    week.innerHTML = '';
+    for (let i = 0; i < 7; i++) { const d = D.addDays(today, i); const p = P.planDay(d, C); const col = h('div', { class: 'd' + (d === today ? ' today' : '') }); col.append(h('div', { class: 'h' }, D.dow(d), h('b', {}, Number(d.slice(8))))); const mode = P.modeFor(d, C); if (mode.mode !== 'normal') col.append(h('div', { class: 'it', style: 'color:var(--amber);font-weight:700;border-top:none' }, mode.mode)); eventsOn(d).filter(e => e.kind !== 'work_block').forEach(e => col.append(h('div', { class: 'it' }, e.title, h('small', {}, e.all_day ? 'All day' : D.fmtHM(D.timeOf(e.starts_at, S.tz)))))); [...p.must, ...p.planned.filter(c => c.importance !== 'nice')].slice(0, 5).forEach(c => col.append(h('div', { class: 'it' }, c.title, c.importance === 'must' ? h('small', { style: 'color:var(--coral)' }, 'must') : null))); if (col.children.length === 1) col.append(h('div', { class: 'it faint' }, 'Free')); week.append(col); }
+  }
+}
+// PIN display lock
+let pinBuf = '', pinCb = null;
+$('#pin-keys').append(...['1','2','3','4','5','6','7','8','9','','0','⌫'].map(k => h('button', { onclick: () => pinPress(k), style: k === '' ? 'visibility:hidden' : '' }, k)));
+function askPin(cb) { pinBuf = ''; pinCb = cb; $('#pin-err').textContent = ''; pinDots(); $('#pin').classList.add('open'); }
+function pinDots() { $$('#pin .dots i').forEach((d, i) => d.classList.toggle('on', i < pinBuf.length)); }
+async function pinPress(k) { if (k === '⌫') pinBuf = pinBuf.slice(0, -1); else if (k && pinBuf.length < 4) pinBuf += k; pinDots(); if (pinBuf.length === 4) { const ok = await sha(pinBuf) === localStorage.getItem('hb_wall_pin'); if (ok) { $('#pin').classList.remove('open'); pinCb && pinCb(); } else { $('#pin-err').textContent = 'Wrong PIN'; pinBuf = ''; setTimeout(pinDots, 300); } } }
+document.addEventListener('keydown', e => { if ($('#pin').classList.contains('open')) { if (/^\d$/.test(e.key)) pinPress(e.key); if (e.key === 'Backspace') pinPress('⌫'); } });
+let lockTimer; function armWallLock() { clearInterval(lockTimer); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTH + BOOT
+// ═══════════════════════════════════════════════════════════════════════════
+const BUILD = '2.0.0-p1';
+function authScreen(html) { $('#auth').classList.remove('hidden'); $('#auth-box').innerHTML = html; }
+function showApp() { $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+async function boot() {
+  applyTheme();
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (DEMO) { await api.load(); return start(); }
+  if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) return setupScreen();
+  try { await api.init(); } catch (e) { return authScreen(`<h1>HomeBase</h1><p class="sub">Couldn’t load Supabase client (${esc(e.message)}). Check your connection.</p>`); }
+  sb.auth.onAuthStateChange((ev, session) => { S.session = session; S.user = session?.user || null; if (ev === 'SIGNED_OUT') location.reload(); });
+  const { data: { session } } = await sb.auth.getSession(); S.session = session; S.user = session?.user || null;
+  if (!session) return signInScreen();
+  await afterSignIn();
+}
+function setupScreen() {
+  authScreen(`<h1>HomeBase</h1><p class="sub">Connect your Supabase project once on this device.</p>
+    <div class="field"><label>Supabase URL</label><input id="su" placeholder="https://xxxx.supabase.co"></div>
+    <div class="field"><label>Anon key</label><input id="sk" placeholder="eyJ…"></div>
+    <div class="field"><label>AI Worker URL (optional now)</label><input id="sw" placeholder="https://homebase-ai.you.workers.dev"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="sgo">Continue</button>
+    <div class="alt"><button id="sdemo">Try the demo instead</button></div>`);
+  $('#sgo').onclick = () => { localStorage.setItem('hb_sb_url', $('#su').value.trim()); localStorage.setItem('hb_sb_key', $('#sk').value.trim()); if ($('#sw').value.trim()) localStorage.setItem('hb_worker_url', $('#sw').value.trim()); location.reload(); };
+  $('#sdemo').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
+}
+function signInScreen(msg = '') {
+  authScreen(`<h1>HomeBase</h1><p class="sub">Sign in to your household.</p>${msg ? `<div class="note" style="margin-bottom:12px">${esc(msg)}</div>` : ''}
+    <div class="field"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="field" id="pwf"><label>Password</label><input id="pw" type="password" autocomplete="current-password"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="go">Sign in</button>
+    <div class="alt"><button id="magic">Email me a sign-in link instead</button> · <button id="signup">Create account</button></div>
+    <div class="alt" style="margin-top:22px"><button id="demo2">Try the demo</button></div>`);
+  $('#go').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('#em').value.trim(), password: $('#pw').value }); if (error) return signInScreen(error.message); await afterSignIn(); };
+  $('#pw').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
+  $('#magic').onclick = async () => { const { error } = await sb.auth.signInWithOtp({ email: $('#em').value.trim(), options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Check your email for the link.'); };
+  $('#signup').onclick = async () => { const { error } = await sb.auth.signUp({ email: $('#em').value.trim(), password: $('#pw').value, options: { emailRedirectTo: location.origin + location.pathname } }); signInScreen(error ? error.message : 'Account created. If email confirmation is on, confirm then sign in.'); };
+  $('#demo2').onclick = () => { localStorage.setItem('hb_demo', '1'); location.href = location.pathname + '?demo=1'; };
+}
+async function afterSignIn() {
+  const { data: mem, error } = await sb.from('household_members').select('household_id, person_id, households(*)').limit(1);
+  if (error) return signInScreen('Could not read membership: ' + error.message + ' — did you run the v2 migrations?');
+  if (!mem?.length) return householdScreen();
+  S.hh = mem[0].household_id; S.household = mem[0].households; S.tz = S.household?.tz || S.tz; S.settings = S.household?.settings || {};
+  await api.load();
+  S.person = S.get('people', mem[0].person_id) || S.people.find(p => p.is_user) || null;
+  api.subscribe();
+  start();
+}
+function householdScreen(msg = '') {
+  const first = (S.user?.email || '').split('@')[0];
+  authScreen(`<h1>Welcome</h1><p class="sub">Create your household, or join one with an invite code.</p>${msg ? `<div class="note" style="margin-bottom:12px">${esc(msg)}</div>` : ''}
+    <div class="field"><label>Your name</label><input id="pn" value="${esc(first.charAt(0).toUpperCase() + first.slice(1))}"></div>
+    <div class="field"><label>Household name</label><input id="hn" placeholder="The Champness House"></div>
+    <button class="btn btn-primary btn-lg btn-block" id="mk">Create household (with Luke’s starter setup)</button>
+    <div class="sec-title" style="margin-top:14px">or join</div>
+    <div class="field"><label>Invite code</label><input id="ic" placeholder="8 characters" style="text-transform:uppercase"></div>
+    <button class="btn btn-ghost btn-lg btn-block" id="jn">Join household</button>`);
+  $('#mk').onclick = async () => { const { error } = await sb.rpc('create_household', { p_name: $('#hn').value.trim() || 'Home', p_person_name: $('#pn').value.trim() || 'Me', p_seed: true }); if (error) return householdScreen(error.message); await afterSignIn(); };
+  $('#jn').onclick = async () => { const { error } = await sb.rpc('join_household', { p_code: $('#ic').value.trim(), p_person_name: $('#pn').value.trim() || 'Me' }); if (error) return householdScreen(error.message); await afterSignIn(); };
+}
+function start() {
+  showApp();
+  loadWeather();
+  onChange(tables => { if (W.open) renderWall(); if ($('#sheet').classList.contains('open') && !tables.has('list_items') && !tables.has('memories')) return; renderers[view]?.(); if (tables.has('tasks') || tables.has('maintenance_rules')) updateBadges(); });
+  updateBadges();
+  const initial = WALL_START ? 'today' : (location.hash.slice(1) || 'today');
+  nav(VIEWS[initial] ? initial : 'today');
+  if (WALL_START) openWall();
+  // midnight rollover + periodic refresh
+  let lastDay = S.today();
+  setInterval(() => { const t = S.today(); if (t !== lastDay) { lastDay = t; localStorage.removeItem('hb_wx'); loadWeather(); renderers[view]?.(); if (W.open) renderWall(); } }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (!DEMO) api.load().then(() => { emit('tasks'); }); loadWeather(); } });
+  window.addEventListener('resize', debounce(() => renderers[view]?.(), 150));
+}
+function updateBadges() {
+  const today = S.today();
+  const n = S.all('tasks').filter(t => t.status === 'open' && t.importance === 'must' && t.due_date && t.due_date < today).length + S.all('maintenance_rules').filter(m => m.active !== false && m.next_due && m.next_due < today).length;
+  $$('.nav-btn[data-nav="today"]').forEach(b => { let bd = b.querySelector('.badge'); if (n) { if (!bd) { bd = h('span', { class: 'badge' }); b.append(bd); } bd.textContent = n; } else bd?.remove(); });
+}
+boot().catch(e => { console.error(e); authScreen(`<h1>HomeBase</h1><p class="sub">Something went wrong starting up: ${esc(e.message)}</p><button class="btn btn-ghost" onclick="location.reload()">Reload</button>`); });
+</script>
+</body>
+</html>
